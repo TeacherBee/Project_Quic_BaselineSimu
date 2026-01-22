@@ -1,10 +1,11 @@
 """网络链路模块"""
 import random
 import heapq
+import numpy as np
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 
-from packet import Packet
+from packet import Packet, PacketStatus
 from config import SimulationConfig
 
 @dataclass

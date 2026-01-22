@@ -1,7 +1,7 @@
 """QUIC协议仿真器包"""
 
 __version__ = "1.0.0"
-__author__ = "Your Name"
+__author__ = "bannos"
 __description__ = "QUIC协议冗余发包策略仿真器"
 
 # 导出主要类

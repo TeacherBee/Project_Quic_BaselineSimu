@@ -21,16 +21,18 @@ class QUICSimulator:
     
     def __init__(self, config: SimulationConfig):
         self.config = config
-        self.stats_collector = StatisticsCollector()
-        
-        # 初始化组件
-        self._init_components()
         
         # 仿真状态
         self.time = 0.0
         self.next_send_time = 0.0
         self.simulation_running = False
         self.timeline_data = []
+        
+        # 初始化统计收集器
+        self.stats_collector = StatisticsCollector()
+        
+        # 初始化组件
+        self._init_components()
         
     def _init_components(self):
         """初始化所有组件"""
