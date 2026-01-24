@@ -4,6 +4,7 @@ import random
 import sys
 import re
 from collections import defaultdict
+import datetime
 
 class Config:
     B = 100e6               # 100 Mbps
@@ -82,11 +83,34 @@ class FastSim:
         self.event_id = 0
         self.max_window = 100
 
+        # --- Logging Setup ---
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_filename = f"sim_log_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
+        self.log_file_handle = open(self.log_filename, 'w')
+        self.log_file_handle.write(f"--- Simulation Log Started at {datetime.datetime.now()} ---\n")
+        self.log_file_handle.write(f"Mode: {self.mode}, k: {self.k_rep}, Loss Rate: {self.loss_rate}\n")
+        self.log_file_handle.write(f"Total Packets to Send: {self.num_pkts}\n\n")
+
+
+    def log_event(self, message):
+        """Helper function to write messages to the log file."""
+        if self.log_file_handle:
+            self.log_file_handle.write(message + "\n")
+            self.log_file_handle.flush() # Ensure immediate write
+
+    def close_log(self):
+        """Close the log file handle."""
+        if self.log_file_handle:
+            self.log_file_handle.close()
+            self.log_file_handle = None
+
     def schedule(self, t, ev_type, data=None):
         heapq.heappush(self.events, (t, self.event_id, ev_type, data))
         self.event_id += 1
 
     def run(self):
+        # Log initial setup
+        self.log_event("--- Simulation Run Started ---")
         for sn in range(min(self.max_window, self.num_pkts)):
             send_time = sn * self.send_interval
             self._send_packet(sn, send_time)
@@ -102,6 +126,12 @@ class FastSim:
                 if data['sn'] in self.unacked:
                     self._retransmit(t, data['sn'])
 
+        # Final logging before calculations
+        self.log_event("\n--- Simulation Run Ended ---")
+        self.log_event(f"Final next_expected: {self.next_expected}")
+        self.log_event(f"Final delivered: {self.delivered}")
+        self.log_event(f"Final receiver_buffer: {sorted(list(self.receiver_buffer))}")
+
         last_time = max((t for t, _ in self.buffer_history), default=0.1)
         throughput_mbps = (self.delivered * self.PKT_SIZE * 8) / last_time / 1e6
 
@@ -116,60 +146,86 @@ class FastSim:
             time_span = prev_t - self.buffer_history[0][0]
             avg_queue = total / time_span if time_span > 0 else 0.0
 
-        return {
+        results = {
             'throughput_mbps': throughput_mbps,
             'avg_queue_length': avg_queue,
             'delivered_packets': self.delivered
         }
+        self.close_log() # Close log file before returning
+        return results
 
     def _send_packet(self, sn, send_time):
         if sn >= self.num_pkts:
             return
-            
+
+        # Calculate base time for sending one packet
+        base_pkt_time = self.PKT_SIZE * 8 / self.B
+
         # Send original packet
         if random.random() >= self.loss_rate:
             arrive_time = send_time + self.RTT / 2
             self.schedule(arrive_time, 'arrive', {'sn': sn})
+            # --- ADDED LOGGING FOR ORIGINAL PACKET ---
+            self.log_event(f"[SEND] Scheduling ORIGINAL packet {sn} arrival at {arrive_time:.4f}")
+            # -----------------------------------------
         else:
-            # Even if lost, track it for XOR group management
-            pass
-            
-        # Send redundant packet(s) based on mode
-        base_pkt_time = self.PKT_SIZE * 8 / self.B
-        
+            # Log if the original packet is lost
+            self.log_event(f"[SEND] ORIGINAL packet {sn} LOST at {send_time:.4f}")
+
+
+        # Send redundant packet based on mode
         if self.mode == 'replicate':
             # Send redundant copy right after
             red_time = send_time + base_pkt_time
             if random.random() >= self.loss_rate:
                 arrive_time = red_time + self.RTT / 2
                 self.schedule(arrive_time, 'arrive', {'sn': sn})
-                
+                # --- ADDED LOGGING FOR REDUNDANT PACKET ---
+                self.log_event(f"[SEND] Scheduling REPLICATE packet {sn} arrival at {arrive_time:.4f}")
+                # -----------------------------------------
+            else:
+                self.log_event(f"[SEND] REPLICATE packet {sn} LOST at {red_time:.4f}")
+
         elif self.mode == 'replicate_k_1':
-            # Check if this is the last packet in a group of k
+            # Check if this is the k-th packet in a group of k
             if (sn + 1) % self.k_rep == 0 or sn == self.num_pkts - 1:
-                # Send redundant copy of THIS packet (sn)
                 red_time = send_time + base_pkt_time
                 if random.random() >= self.loss_rate:
                     arrive_time = red_time + self.RTT / 2
                     self.schedule(arrive_time, 'arrive', {'sn': sn})
-        
+                    # --- ADDED LOGGING FOR REDUNDANT PACKET ---
+                    self.log_event(f"[SEND] Scheduling REPLICATE_K_1 packet {sn} arrival at {arrive_time:.4f}")
+                    # -----------------------------------------
+                else:
+                    self.log_event(f"[SEND] REPLICATE_K_1 packet {sn} LOST at {red_time:.4f}")
+
+        elif self.mode == 'xor':
+            # XOR packet is sent after base_pkt_time
+            xor_time = send_time + base_pkt_time
+            if random.random() >= self.loss_rate:
+                arrive_time = xor_time + self.RTT / 2
+                self.schedule(arrive_time, 'arrive', {'sn': -sn})
+                # --- ADDED LOGGING FOR REDUNDANT PACKET ---
+                self.log_event(f"[SEND] Scheduling XOR packet {-sn} arrival at {arrive_time:.4f}")
+                # -----------------------------------------
+            else:
+                self.log_event(f"[SEND] XOR packet {-sn} LOST at {xor_time:.4f}")
+
         elif self.mode == 'xor_k_1':
-            # Add packet to its group
-            group_id = sn // self.k_rep
-            if group_id not in self.xor_groups:
-                self.xor_groups[group_id] = {'sent': set(), 'arrived': set()}
-            self.xor_groups[group_id]['sent'].add(sn)
-            
-            # Check if this is the last packet in a group of k
+            # Check if this is the k-th packet in a group of k
             if (sn + 1) % self.k_rep == 0 or sn == self.num_pkts - 1:
-                # Send XOR redundant packet for this group
-                red_time = send_time + base_pkt_time
+                # XOR result of the group
+                xor_time = send_time + base_pkt_time
                 if random.random() >= self.loss_rate:
-                    arrive_time = red_time + self.RTT / 2
-                    # Use a special SN value to identify XOR packets (e.g., negative or a tuple)
-                    # Using a tuple (group_id, 'xor') is clearer
-                    self.schedule(arrive_time, 'arrive', {'sn': (group_id, 'xor')})
-        
+                    arrive_time = xor_time + self.RTT / 2
+                    self.schedule(arrive_time, 'arrive', {'sn': -sn})
+                    # --- ADDED LOGGING FOR REDUNDANT PACKET ---
+                    self.log_event(f"[SEND] Scheduling XOR_K_1 packet {-sn} arrival at {arrive_time:.4f}")
+                    # -----------------------------------------
+                else:
+                    self.log_event(f"[SEND] XOR_K_1 packet {-sn} LOST at {xor_time:.4f}")
+
+        # Set timeout for original packet
         self.unacked[sn] = send_time
         self.schedule(send_time + self.RTO, 'timeout', {'sn': sn})
 
@@ -178,8 +234,11 @@ class FastSim:
         if isinstance(pkt_identifier, tuple) and len(pkt_identifier) == 2 and pkt_identifier[1] == 'xor':
             group_id = pkt_identifier[0]
             # This is an XOR packet arrival
+            self.log_event(f"[{t:.4f}] RX: XOR packet for group {group_id} arrived.")
             if group_id not in self.xor_groups:
-                # Group info might be old, ignore
+                self.log_event(f"  -> Group {group_id} info not found or outdated. Ignoring.")
+                # Update history even if ignored
+                self.buffer_history.append((t, len(self.receiver_buffer)))
                 return
             
             group_info = self.xor_groups[group_id]
@@ -188,68 +247,100 @@ class FastSim:
             
             # Check if we can recover exactly one missing packet
             missing_in_group = sent_set - arrived_set
+            self.log_event(f"  -> Group {group_id}: Sent={sorted(list(sent_set))}, Arrived={sorted(list(arrived_set))}, Missing={sorted(list(missing_in_group))}")
+            
             if len(missing_in_group) == 1:
                 recovered_sn = missing_in_group.pop()
+                self.log_event(f"  -> SUCCESS: Recovering missing packet {recovered_sn} using XOR for group {group_id}.")
+                
                 # Simulate recovery by adding it to delivered count and buffer if necessary
                 if recovered_sn < self.next_expected:
-                    # Already implicitly delivered or accounted for
+                    self.log_event(f"     Packet {recovered_sn} was already expected/delivered (next_expected={self.next_expected}). No action needed.")
                     pass
                 elif recovered_sn == self.next_expected:
                     self.delivered += 1
+                    self.log_event(f"     Delivered recovered packet {recovered_sn}. New delivered count: {self.delivered}")
                     self.next_expected += 1
+                    self.log_event(f"     Updated next_expected to {self.next_expected}. Checking buffer for consecutive packets...")
                     while self.next_expected in self.receiver_buffer:
-                        self.receiver_buffer.remove(self.next_expected)
+                        buffered_sn = self.next_expected
+                        self.receiver_buffer.remove(buffered_sn)
                         self.delivered += 1
+                        self.log_event(f"     Delivered buffered packet {buffered_sn} (consecutive). New delivered count: {self.delivered}")
                         self.next_expected += 1
+                    self.log_event(f"     Final next_expected after delivery: {self.next_expected}")
                 else:
                     # Put recovered packet in buffer
                     self.receiver_buffer.add(recovered_sn)
+                    self.log_event(f"     Recovered packet {recovered_sn} is beyond next_expected ({self.next_expected}). Adding to buffer. Buffer now: {sorted(list(self.receiver_buffer))}")
                     
                 # Mark the recovered packet as arrived for future checks
                 arrived_set.add(recovered_sn)
                 # Also need to check if this recovery unblocks other packets already in buffer
-                while self.next_expected in self.receiver_buffer:
-                    self.receiver_buffer.remove(self.next_expected)
-                    self.delivered += 1
-                    self.next_expected += 1
-            # If more than one missing, cannot recover with this single XOR packet
-            # If zero missing, XOR packet is redundant but harmless
+                if recovered_sn < self.next_expected:
+                     # This case implies no action needed above, so just log the state
+                     pass
+                else: # recovered_sn == self.next_expected or added to buffer
+                    # If recovered_sn was added to buffer (because it was > next_expected),
+                    # the while loop below won't trigger.
+                    # If recovered_sn was == next_expected, the while loop inside the 'elif' block already ran.
+                    pass
+            elif len(missing_in_group) == 0:
+                 self.log_event(f"  -> XOR packet is redundant; all packets in group {group_id} have already arrived.")
+            else: # len(missing_in_group) > 1
+                self.log_event(f"  -> FAILED: Cannot recover from {len(missing_in_group)} missing packets in group {group_id} with only 1 XOR packet.")
+            
             # Update history after potential recovery
             self.buffer_history.append((t, len(self.receiver_buffer)))
             return # Exit after handling XOR packet
 
         # Handle regular packet arrival
         sn = pkt_identifier
+        self.log_event(f"[{t:.4f}] RX: Data packet {sn} arrived.")
         if sn < self.next_expected:
+            self.log_event(f"  -> Packet {sn} is old/duplicate (expected >= {self.next_expected}). Dropping.")
+            self.buffer_history.append((t, len(self.receiver_buffer)))
             return
             
         if sn == self.next_expected:
             self.delivered += 1
+            self.log_event(f"  -> Packet {sn} is expected. Delivering. New delivered count: {self.delivered}")
             self.next_expected += 1
+            self.log_event(f"  -> Updated next_expected to {self.next_expected}. Checking buffer for consecutive packets...")
             while self.next_expected in self.receiver_buffer:
-                self.receiver_buffer.remove(self.next_expected)
+                buffered_sn = self.next_expected
+                self.receiver_buffer.remove(buffered_sn)
                 self.delivered += 1
+                self.log_event(f"     Delivered buffered packet {buffered_sn} (consecutive). New delivered count: {self.delivered}")
                 self.next_expected += 1
+            self.log_event(f"  -> Final next_expected after delivery: {self.next_expected}")
         else:
             self.receiver_buffer.add(sn)
+            self.log_event(f"  -> Packet {sn} is not expected (expected {self.next_expected}). Adding to buffer. Buffer now: {sorted(list(self.receiver_buffer))}")
             
         # Track this packet's arrival for XOR groups
         if self.mode == 'xor_k_1':
             group_id = sn // self.k_rep
             if group_id in self.xor_groups:
                  self.xor_groups[group_id]['arrived'].add(sn)
+                 self.log_event(f"  -> Added packet {sn} (group {group_id}) to XOR arrived list.")
 
         self.buffer_history.append((t, len(self.receiver_buffer)))
         
         cumulative = self.next_expected - 1
         selective = [s for s in self.receiver_buffer if s > cumulative]
-        self.schedule(t + 1e-9, 'ack', {'cumulative': cumulative, 'selective': selective}) # Use smaller delta to avoid floating point issues with event sorting
+        self.log_event(f"  -> Sending ACK: Cumulative={cumulative}, Selective={selective}")
+        self.schedule(t + 1e-9, 'ack', {'cumulative': cumulative, 'selective': selective})
         
         while (self.next_sn < self.num_pkts and 
                (self.next_sn - (self.next_expected - 1)) < self.max_window):
             send_time = self.next_sn * self.send_interval
+            # Only log the first few sends to keep log manageable
+            if self.next_sn < 10:
+                self.log_event(f"  -> Scheduling next packet {self.next_sn} at {send_time:.4f}")
             self._send_packet(self.next_sn, send_time)
             self.next_sn += 1
+
 
     def _on_ack(self, t, cumulative, selective):
         to_remove = [sn for sn in self.unacked if sn <= cumulative]
@@ -258,6 +349,8 @@ class FastSim:
         for sn in selective:
             if sn in self.unacked:
                 del self.unacked[sn]
+        # Log ACK processing if desired, though less critical for RX behavior verification
+        # self.log_event(f"[{t:.4f}] ACK processed. Cumulative={cumulative}, Selective={selective}. Unacked now: {sorted(list(self.unacked.keys()))}")
 
     def _retransmit(self, t, sn):
         if sn not in self.unacked:
@@ -274,7 +367,12 @@ class FastSim:
 # ======================
 def simulate(loss_rate, redundancy):
     sim = FastSim(loss_rate, redundancy)
-    return sim.run()
+    try:
+        result = sim.run()
+    finally:
+        # Ensure log file is closed even if an error occurs during simulation
+        sim.close_log()
+    return result
 
 def main():
     if len(sys.argv) != 3:
@@ -294,6 +392,7 @@ def main():
     result = simulate(loss_rate, redundancy)
     
     total_pkts = (Config().FLOW_SIZE + Config().PKT_SIZE - 1) // Config().PKT_SIZE
+    print(f"Log saved to file: sim_log_{redundancy}_loss_{loss_rate:.2f}_<timestamp>.txt")
     print(f"Loss={loss_rate:.1%}, Redundancy={redundancy}")
     print(f"Throughput: {result['throughput_mbps']:.2f} Mbps")
     print(f"Avg Queue Length: {result['avg_queue_length']:.1f} packets")
