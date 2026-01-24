@@ -1,4 +1,4 @@
-# fast_sim.py —— Supports: none, replicate, replicate_k_1
+# FindRedThreshold_EventDrivenSimu.py—— Supports: none, replicate, replicate_k_1, xor_k_1
 import heapq
 import random
 import sys
@@ -19,7 +19,8 @@ class FastSim:
         
         # Parse redundancy mode
         self.mode = 'none'
-        self.k_rep = None  # for replicate_k_1
+        self.k_rep = None  # for replicate_k_1 and xor_k_1
+        self.xor_groups = {} # For xor_k_1: maps group_id -> {pkts_sent, pkts_arrived}
         
         if redundancy == 'none':
             self.mode = 'none'
@@ -34,9 +35,17 @@ class FastSim:
             if self.k_rep <= 0:
                 raise ValueError("k must be positive")
             self.mode = 'replicate_k_1'
+        elif redundancy.startswith('xor_'):
+            match = re.match(r'xor_(\d+)_1', redundancy)
+            if not match:
+                raise ValueError("Use 'xor_k_1', e.g., 'xor_4_1'")
+            self.k_rep = int(match.group(1))
+            if self.k_rep <= 0:
+                raise ValueError("k must be positive")
+            self.mode = 'xor_k_1'
         else:
-            raise ValueError("Redundancy must be: 'none', 'replicate', or 'replicate_k_1' (e.g., 'replicate_4_1')")
-        
+            raise ValueError("Redundancy must be: 'none', 'replicate', 'replicate_k_1' (e.g., 'replicate_4_1'), or 'xor_k_1' (e.g., 'xor_4_1')")
+
         cfg = Config()
         self.B = cfg.B
         self.RTT = cfg.RTT
@@ -52,8 +61,8 @@ class FastSim:
             self.send_interval = base_interval
         elif self.mode == 'replicate':
             self.send_interval = base_interval * 2  # 1 orig + 1 red per packet
-        elif self.mode == 'replicate_k_1':
-            # Every k original packets → k + 1 physical packets
+        elif self.mode == 'replicate_k_1' or self.mode == 'xor_k_1':
+            # Every k original packets -> k + 1 physical packets
             self.send_interval = base_interval * (self.k_rep + 1) / self.k_rep
         else:
             self.send_interval = base_interval
@@ -121,6 +130,9 @@ class FastSim:
         if random.random() >= self.loss_rate:
             arrive_time = send_time + self.RTT / 2
             self.schedule(arrive_time, 'arrive', {'sn': sn})
+        else:
+            # Even if lost, track it for XOR group management
+            pass
             
         # Send redundant packet(s) based on mode
         base_pkt_time = self.PKT_SIZE * 8 / self.B
@@ -141,10 +153,73 @@ class FastSim:
                     arrive_time = red_time + self.RTT / 2
                     self.schedule(arrive_time, 'arrive', {'sn': sn})
         
+        elif self.mode == 'xor_k_1':
+            # Add packet to its group
+            group_id = sn // self.k_rep
+            if group_id not in self.xor_groups:
+                self.xor_groups[group_id] = {'sent': set(), 'arrived': set()}
+            self.xor_groups[group_id]['sent'].add(sn)
+            
+            # Check if this is the last packet in a group of k
+            if (sn + 1) % self.k_rep == 0 or sn == self.num_pkts - 1:
+                # Send XOR redundant packet for this group
+                red_time = send_time + base_pkt_time
+                if random.random() >= self.loss_rate:
+                    arrive_time = red_time + self.RTT / 2
+                    # Use a special SN value to identify XOR packets (e.g., negative or a tuple)
+                    # Using a tuple (group_id, 'xor') is clearer
+                    self.schedule(arrive_time, 'arrive', {'sn': (group_id, 'xor')})
+        
         self.unacked[sn] = send_time
         self.schedule(send_time + self.RTO, 'timeout', {'sn': sn})
 
-    def _on_arrival(self, t, sn):
+    def _on_arrival(self, t, pkt_identifier):
+        # Handle XOR packets first
+        if isinstance(pkt_identifier, tuple) and len(pkt_identifier) == 2 and pkt_identifier[1] == 'xor':
+            group_id = pkt_identifier[0]
+            # This is an XOR packet arrival
+            if group_id not in self.xor_groups:
+                # Group info might be old, ignore
+                return
+            
+            group_info = self.xor_groups[group_id]
+            sent_set = group_info['sent']
+            arrived_set = group_info['arrived']
+            
+            # Check if we can recover exactly one missing packet
+            missing_in_group = sent_set - arrived_set
+            if len(missing_in_group) == 1:
+                recovered_sn = missing_in_group.pop()
+                # Simulate recovery by adding it to delivered count and buffer if necessary
+                if recovered_sn < self.next_expected:
+                    # Already implicitly delivered or accounted for
+                    pass
+                elif recovered_sn == self.next_expected:
+                    self.delivered += 1
+                    self.next_expected += 1
+                    while self.next_expected in self.receiver_buffer:
+                        self.receiver_buffer.remove(self.next_expected)
+                        self.delivered += 1
+                        self.next_expected += 1
+                else:
+                    # Put recovered packet in buffer
+                    self.receiver_buffer.add(recovered_sn)
+                    
+                # Mark the recovered packet as arrived for future checks
+                arrived_set.add(recovered_sn)
+                # Also need to check if this recovery unblocks other packets already in buffer
+                while self.next_expected in self.receiver_buffer:
+                    self.receiver_buffer.remove(self.next_expected)
+                    self.delivered += 1
+                    self.next_expected += 1
+            # If more than one missing, cannot recover with this single XOR packet
+            # If zero missing, XOR packet is redundant but harmless
+            # Update history after potential recovery
+            self.buffer_history.append((t, len(self.receiver_buffer)))
+            return # Exit after handling XOR packet
+
+        # Handle regular packet arrival
+        sn = pkt_identifier
         if sn < self.next_expected:
             return
             
@@ -158,11 +233,17 @@ class FastSim:
         else:
             self.receiver_buffer.add(sn)
             
+        # Track this packet's arrival for XOR groups
+        if self.mode == 'xor_k_1':
+            group_id = sn // self.k_rep
+            if group_id in self.xor_groups:
+                 self.xor_groups[group_id]['arrived'].add(sn)
+
         self.buffer_history.append((t, len(self.receiver_buffer)))
         
         cumulative = self.next_expected - 1
         selective = [s for s in self.receiver_buffer if s > cumulative]
-        self.schedule(t + 1e-5, 'ack', {'cumulative': cumulative, 'selective': selective})
+        self.schedule(t + 1e-9, 'ack', {'cumulative': cumulative, 'selective': selective}) # Use smaller delta to avoid floating point issues with event sorting
         
         while (self.next_sn < self.num_pkts and 
                (self.next_sn - (self.next_expected - 1)) < self.max_window):
@@ -203,6 +284,7 @@ def main():
         print("    - 'none'")
         print("    - 'replicate' (1:1 redundancy)")
         print("    - 'replicate_k_1' (e.g., 'replicate_4_1' → every 4 packets, add 1 redundant copy)")
+        print("    - 'xor_k_1' (e.g., 'xor_4_1' → every 4 packets, add 1 XOR redundant copy)")
         sys.exit(1)
     
     loss_rate = float(sys.argv[1])
