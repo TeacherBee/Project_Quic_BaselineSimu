@@ -1,0 +1,84 @@
+### Algorithm: BPACS – Bidirectional Path-Aware Chunk Scheduler
+
+## 1: function OnNewStream(s, data_size, D_req)
+  2:     // Step 1: 判断是否为“大流”
+# 3:     if data_size < S_min then
+# 4:         AssignStreamToPath(s, Path_main)   // 小流直接走主路径
+# 5:         return
+# 6:     end if
+7:
+  8:     // Step 2: 获取主路径当前可用带宽（来自 BBR 或拥塞控制器）
+# 9:     B_avail_main ← GetAvailableBandwidth(Path_main)
+10:
+  11:    // Step 3: 判断是否需要双路径
+# 12:    if D_req ≤ γ * B_avail_main then
+# 13:        AssignStreamToPath(s, Path_main)   // 带宽够，单路径
+# 14:        return
+# 15:    end if
+16:
+  17:    // Step 4: 启用双路径分片传输
+# 18:    B_total ← B_avail_main + GetAvailableBandwidth(Path_backup)
+# 19:    ratio_main ← B_avail_main / B_total   // 带宽比例分配     ----------------------------------------------- 这里考虑DEMS是怎么分配比例的，考虑两台链路的rtt和bw来确定比例
+20:
+  21:    // Step 5: 划分数据为固定大小 chunks
+# 22:    chunk_size ← 64 KB                    // 可配置
+# 23:    N ← ceil(data_size / chunk_size)      // 总 chunk 数
+# 24:    k ← floor(N * ratio_main)             // 主路径负责前 k 个 chunk
+25:
+  26:    // 边界保护：确保至少各分配 1 个 chunk
+# 27:    if k == 0 then k ← 1 end if
+# 28:    if k >= N then k ← N - 1 end if
+29:
+  30:    // Step 6: 构建 chunk-to-path 映射
+# 31:    for i = 0 to k - 1 do
+# 32:        AssignChunk(s, chunk_id=i, path=Path_main, direction=FORWARD)
+# 33:    end for
+34:
+# 35:    for i = N - 1 downto k do
+# 36:        AssignChunk(s, chunk_id=i, path=Path_backup, direction=BACKWARD)
+# 37:    end for
+38:
+  39:    // Step 7: 注册流状态（用于后续丢包处理）
+# 40:    RegisterStreamState(s, {
+# 41:        mode: DUAL_PATH,
+# 42:        chunks_main: [0, k-1],
+# 43:        chunks_backup: [k, N-1],
+# 44:        chunk_size: chunk_size,
+# 45:        total_chunks: N
+# 46:    })
+# 47: end function
+
+
+// 辅助函数：分配整个流到单路径（小流或带宽充足）
+# 48: function AssignStreamToPath(s, path)
+# 49:     for each packet in s.stream_data do
+# 50:         SendPacket(packet, path=path)
+# 51:     end for
+# 52:     RegisterStreamState(s, { mode: SINGLE_PATH, path: path })
+# 53: end function
+
+
+// 辅助函数：分配单个 chunk 到指定路径（MPQUIC STREAM 帧携带 CID）
+# 54: function AssignChunk(s, chunk_id, path, direction)
+# 55:     offset ← chunk_id * chunk_size
+# 56:     data ← ReadData(s, offset, chunk_size)
+# 57:     // 使用对应路径的 Connection ID 发送
+# 58:     cid ← GetConnectionIDForPath(path)
+# 59:     SendSTREAMFrame(stream_id=s.id, offset=offset, data=data, cid=cid)
+# 60: end function
+
+
+// 可选：丢包恢复时的重注入逻辑（增强鲁棒性）
+# 61: function OnPacketLossDetected(s, missing_offset)
+# 62:     state ← GetStreamState(s)
+# 63:     if state.mode ≠ DUAL_PATH then
+# 4:         // 单路径流：按原路径重传
+# 65:         ResendOnOriginalPath(s, missing_offset)
+# 66:         return
+# 67:     end if
+68:
+  69:     // 双路径流：优先用快路径重注入缺失 chunk
+# 70:     chunk_id ← floor(missing_offset / state.chunk_size)
+# 71:     fast_path ← Path_main   // 假设主路径更快
+# 72:     SendReinjection(s, chunk_id, fast_path)
+# 73: end function

@@ -1,0 +1,31 @@
+// 步骤1：自适应冗余决策（适用于所有流）
+获取主路径丢包率 p 和连续丢包标志 b
+if b == true or p > τhigh :
+        cr ← copy(c)
+else if p < τlow :
+        cr ← 空    // 不启用冗余
+else :
+        cr ← XOR-FEC(c)
+endif
+
+// 步骤2：路径调度决策
+if F ≤ Fsmall or F ≤ γ * Bavail(Pm) :
+        send(c) to Pm    // 小流或低需求流：单路径发送
+        if cr != 空 :
+                turn to step(23)    // 需要处理冗余包
+        endif
+        return
+else :
+        (P *,TSN)←FPS-Schedule(c.SN)
+        send(c) to P*    // 大流：多路径调度
+endif
+
+// 步骤3：冗余包智能路由
+if cr == 空 : return
+计算备份路径的单向时延OWD(Pb) ← RTTb/2
+if OWD(Pb) < RTO(Pm) :
+        send(cr) to Pb    // 独立冗余流
+else :
+        (Pr ,TSNr)←FPS-Schedule(c.SN)
+        send(cr) to Pr    // 随数据流调度
+endif

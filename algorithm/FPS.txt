@@ -1,0 +1,24 @@
+def choose_path_and_seq(current_sn, paths):
+    best_path = None
+    best_send_sn = current_sn
+    earliest_arrival = float('inf')
+
+    for path in paths:
+        if path.cwnd > 0:  # 拥塞窗口允许发送
+            # 预测本包到达时间 = 当前时间 + 单向延迟 + 排队延迟（可简化为 FT）
+            arrival_time = now() + path.FT
+            
+            # 预测在此时间前，其他路径能送达多少包？
+            N = 0
+            for other in paths:
+                if other != path:
+                    # 粗略估计：other 路径每 FT_other 发一个包
+                    N += max(0, (arrival_time - other.last_send_time) // other.FT)
+            
+            send_sn = current_sn + N
+            if arrival_time < earliest_arrival:
+                earliest_arrival = arrival_time
+                best_path = path
+                best_send_sn = send_sn
+
+    return best_path, best_send_sn

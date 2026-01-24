@@ -11,11 +11,11 @@ class SimulationConfig:
     packet_size: int = 1200          # 包大小（字节）
     
     # 网络参数
-    loss_rate: float = 0.3           # 丢包率
-    delay_mean: float = 0.01         # 平均延迟（秒）
+    loss_rate: float = 0.1           # 丢包率
+    delay_mean: float = 0.1         # 平均延迟（秒）
     delay_std: float = 0.002         # 延迟标准差
-    delay_min: float = 0.001         # 最小延迟
-    delay_max: float = 0.05          # 最大延迟
+    delay_min: float = 0.05         # 最小延迟
+    delay_max: float = 0.3          # 最大延迟
     
     # 发送端参数
     window_size: int = 10            # 发送窗口大小
