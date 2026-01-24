@@ -13,5 +13,6 @@ python FindRedThreshold_script.py(已弃用)
 单次仿真(指定丢包率和策略)：
 python FindRedThreshold_EventDrivenSimu.py 0.05 none
 python FindRedThreshold_EventDrivenSimu.py 0.08 replicate
+python FindRedThreshold_EventDrivenSimu.py 0.05 erasure_4_2
 批量脚本仿真：
 python FindRedThreshold_script.py

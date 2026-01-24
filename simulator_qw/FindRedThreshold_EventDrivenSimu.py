@@ -1,20 +1,23 @@
-# fast_sim.py
+# fast_sim.py —— Fixed: replicate mode now consumes double bandwidth
 import heapq
 import random
 import sys
 from collections import defaultdict
 
 class Config:
-    B = 100e6               # 100 Mbps
+    B = 100e6               # 100 Mbps link capacity
     RTT = 0.6               # 600 ms
     PKT_SIZE = 1250         # bytes
     FLOW_SIZE = 100 * 1024 * 1024  # 100 MB
-    RTO = 1.0               # 超时重传时间 (seconds)
+    RTO = 1.0               # Timeout (seconds)
 
 class FastSim:
     def __init__(self, loss_rate, redundancy):
         self.loss_rate = loss_rate
         self.redundancy = redundancy
+        
+        if redundancy not in ['none', 'replicate']:
+            raise ValueError("Redundancy must be 'none' or 'replicate'")
         
         cfg = Config()
         self.B = cfg.B
@@ -24,7 +27,13 @@ class FastSim:
         self.RTO = cfg.RTO
         
         self.num_pkts = (self.FLOW_SIZE + self.PKT_SIZE - 1) // self.PKT_SIZE
-        self.pkt_interval = self.PKT_SIZE * 8 / self.B  # seconds per packet
+        
+        # 🔧 CRITICAL FIX: Adjust send interval based on redundancy overhead
+        base_interval = self.PKT_SIZE * 8 / self.B  # time to send one packet
+        if redundancy == 'none':
+            self.send_interval = base_interval          # 1 pkt per original
+        elif redundancy == 'replicate':
+            self.send_interval = base_interval * 2      # 2 pkts (orig + red) per original → half rate
         
         # Sender state
         self.next_sn = 0
@@ -39,16 +48,17 @@ class FastSim:
         # Event queue: (time, event_id, event_type, data)
         self.events = []
         self.event_id = 0
-        self.max_window = 100  # max in-flight packets
+        self.max_window = 100  # max in-flight original packets
 
     def schedule(self, t, ev_type, data=None):
         heapq.heappush(self.events, (t, self.event_id, ev_type, data))
         self.event_id += 1
 
     def run(self):
-        # Send initial window
+        # Send initial window of ORIGINAL packets (spaced by send_interval)
         for sn in range(min(self.max_window, self.num_pkts)):
-            self._send_packet(sn, sn * self.pkt_interval)
+            send_time = sn * self.send_interval
+            self._send_packet(sn, send_time)
 
         while self.events and (self.next_sn < self.num_pkts or self.unacked):
             t, _, ev_type, data = heapq.heappop(self.events)
@@ -62,14 +72,9 @@ class FastSim:
                     self._retransmit(t, data['sn'])
 
         # Compute metrics
-        if self.delivered == 0:
-            last_time = 0.1
-        else:
-            last_time = max(t for t, _ in self.buffer_history) if self.buffer_history else 0.1
-
+        last_time = max((t for t, _ in self.buffer_history), default=0.1)
         throughput_mbps = (self.delivered * self.PKT_SIZE * 8) / last_time / 1e6
 
-        # Time-weighted average queue length
         if len(self.buffer_history) < 2:
             avg_queue = 0.0
         else:
@@ -91,15 +96,17 @@ class FastSim:
         if sn >= self.num_pkts:
             return
             
-        # Primary packet
+        # Primary packet sent at send_time
         if random.random() >= self.loss_rate:
             arrive_time = send_time + self.RTT / 2
             self.schedule(arrive_time, 'arrive', {'sn': sn})
             
-        # Redundant packet (replicate)
-        if self.redundancy != 'none':
+        # Redundant packet (only in replicate mode)
+        if self.redundancy == 'replicate':
+            # Send redundant packet halfway through the "slot"
+            redundant_send_time = send_time + (self.PKT_SIZE * 8 / self.B)
             if random.random() >= self.loss_rate:
-                arrive_time = send_time + self.RTT / 2 + 0.001  # slight jitter
+                arrive_time = redundant_send_time + self.RTT / 2
                 self.schedule(arrive_time, 'arrive', {'sn': sn})
                 
         self.unacked[sn] = send_time
@@ -122,19 +129,19 @@ class FastSim:
             
         self.buffer_history.append((t, len(self.receiver_buffer)))
         
-        # Send ACK (cumulative + selective)
+        # Send ACK
         cumulative = self.next_expected - 1
         selective = [s for s in self.receiver_buffer if s > cumulative]
         self.schedule(t + 1e-5, 'ack', {'cumulative': cumulative, 'selective': selective})
         
-        # Pipeline new packets
+        # Pipeline new ORIGINAL packets
         while (self.next_sn < self.num_pkts and 
                (self.next_sn - (self.next_expected - 1)) < self.max_window):
-            self._send_packet(self.next_sn, self.next_sn * self.pkt_interval)
+            send_time = self.next_sn * self.send_interval
+            self._send_packet(self.next_sn, send_time)
             self.next_sn += 1
 
     def _on_ack(self, t, cumulative, selective):
-        # Remove acknowledged packets from unacked
         to_remove = [sn for sn in self.unacked if sn <= cumulative]
         for sn in to_remove:
             del self.unacked[sn]
@@ -145,11 +152,9 @@ class FastSim:
     def _retransmit(self, t, sn):
         if sn not in self.unacked:
             return
-        # Retransmit
         if random.random() >= self.loss_rate:
             arrive_time = t + self.RTT / 2
             self.schedule(arrive_time, 'arrive', {'sn': sn})
-        # Update send time and reset timeout
         self.unacked[sn] = t
         self.schedule(t + self.RTO, 'timeout', {'sn': sn})
 
@@ -158,7 +163,6 @@ class FastSim:
 # CLI Interface
 # ======================
 def simulate(loss_rate, redundancy):
-    """Public API for sweep scripts."""
     sim = FastSim(loss_rate, redundancy)
     return sim.run()
 
@@ -176,13 +180,14 @@ def main():
         print("Redundancy must be 'none' or 'replicate'")
         sys.exit(1)
     
-    random.seed(42)  # for reproducibility
+    random.seed(42)
     result = simulate(loss_rate, redundancy)
     
+    total_pkts = (Config().FLOW_SIZE + Config().PKT_SIZE - 1) // Config().PKT_SIZE
     print(f"Loss={loss_rate:.1%}, Redundancy={redundancy}")
     print(f"Throughput: {result['throughput_mbps']:.2f} Mbps")
     print(f"Avg Queue Length: {result['avg_queue_length']:.1f} packets")
-    print(f"Delivered Packets: {result['delivered_packets']} / {Config().FLOW_SIZE // Config().PKT_SIZE + 1}")
+    print(f"Delivered Packets: {result['delivered_packets']} / {total_pkts}")
 
 if __name__ == '__main__':
     main()
