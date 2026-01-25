@@ -5,6 +5,8 @@ import re
 from collections import defaultdict
 import datetime
 
+useLog = False
+
 class Config:
     B = 100e6               # 100 Mbps
     RTT = 0.6               # 600 ms
@@ -89,55 +91,56 @@ class FastSim:
         self.max_window = 100
 
         # --- Logging Setup - Separated ---
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Define separate log file names with './log/' prefix
-        self.log_tx_filename = f"./log/log_tx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
-        self.log_rx_filename = f"./log/log_rx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
-        
-        # Open separate file handles
-        try:
-            self.log_tx_handle = open(self.log_tx_filename, 'w')
-            self.log_rx_handle = open(self.log_rx_filename, 'w')
+        if useLog:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Define separate log file names with './log/' prefix
+            self.log_tx_filename = f"./log/log_tx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
+            self.log_rx_filename = f"./log/log_rx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
             
-            # Write initial headers
-            header_info = f"--- Simulation Log Started at {datetime.datetime.now()} ---\n"
-            config_info = f"Mode: {self.mode}, k: {self.k_rep}, Loss Rate: {self.loss_rate}\nTotal Packets to Send: {self.num_pkts}\n\n"
-            
-            self.log_tx_handle.write(header_info + "LOG TYPE: TRANSMISSION EVENTS\n" + config_info)
-            self.log_rx_handle.write(header_info + "LOG TYPE: RECEPTION EVENTS\n" + config_info)
-            
-            # Flush headers immediately
-            self.log_tx_handle.flush()
-            self.log_rx_handle.flush()
-            
-        except IOError as e:
-            print(f"Error opening log files: {e}", file=sys.stderr)
-            raise # Re-raise the exception to stop execution if files can't be opened
+            # Open separate file handles
+            try:
+                self.log_tx_handle = open(self.log_tx_filename, 'w')
+                self.log_rx_handle = open(self.log_rx_filename, 'w')
+                
+                # Write initial headers
+                header_info = f"--- Simulation Log Started at {datetime.datetime.now()} ---\n"
+                config_info = f"Mode: {self.mode}, k: {self.k_rep}, Loss Rate: {self.loss_rate}\nTotal Packets to Send: {self.num_pkts}\n\n"
+                
+                self.log_tx_handle.write(header_info + "LOG TYPE: TRANSMISSION EVENTS\n" + config_info)
+                self.log_rx_handle.write(header_info + "LOG TYPE: RECEPTION EVENTS\n" + config_info)
+                
+                # Flush headers immediately
+                self.log_tx_handle.flush()
+                self.log_rx_handle.flush()
+                
+            except IOError as e:
+                print(f"Error opening log files: {e}", file=sys.stderr)
+                raise # Re-raise the exception to stop execution if files can't be opened
 
 
     # Define separate logging methods
     def log_tx_event(self, message):
         """Helper function to write transmission-related messages to the log file."""
-        if hasattr(self, 'log_tx_handle') and self.log_tx_handle:
+        if hasattr(self, 'log_tx_handle') and self.log_tx_handle and useLog:
             self.log_tx_handle.write(message + "\n")
             self.log_tx_handle.flush() # Ensure immediate write
 
     def log_rx_event(self, message):
         """Helper function to write reception-related messages to the log file."""
-        if hasattr(self, 'log_rx_handle') and self.log_rx_handle:
+        if hasattr(self, 'log_rx_handle') and self.log_rx_handle and useLog:
             self.log_rx_handle.write(message + "\n")
             self.log_rx_handle.flush() # Ensure immediate write
 
     # Define separate closing methods
     def close_log_tx(self):
         """Close the transmission log file handle."""
-        if hasattr(self, 'log_tx_handle') and self.log_tx_handle and not self.log_tx_handle.closed:
+        if hasattr(self, 'log_tx_handle') and self.log_tx_handle and not self.log_tx_handle.closed and useLog:
             self.log_tx_handle.close()
             self.log_tx_handle = None
 
     def close_log_rx(self):
         """Close the reception log file handle."""
-        if hasattr(self, 'log_rx_handle') and self.log_rx_handle and not self.log_rx_handle.closed:
+        if hasattr(self, 'log_rx_handle') and self.log_rx_handle and not self.log_rx_handle.closed and useLog:
             self.log_rx_handle.close()
             self.log_rx_handle = None
 

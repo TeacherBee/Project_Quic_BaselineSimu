@@ -1,4 +1,4 @@
-# sweep_avg.py —— 支持自定义策略列表
+# FindRedThreshold__EventDrivenScript.py —— 支持自定义策略列表
 import sys
 import os
 import random
@@ -8,16 +8,20 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from FindRedThreshold_EventDrivenSimu import simulate
 
 def main():
-    # Define your candidate strategies
+    # Define the candidate strategies
     STRATEGIES = [
         'none',
         'replicate',
-        'erasure_2_1',   # XOR
-        'erasure_4_2',   # RS(6,4)
-        'erasure_5_3',   # RS(8,5)
-        'erasure_10_5',  # Strong protection
+        'replicate_2_1',
+        'replicate_3_1',
+        'replicate_5_1',
+        'replicate_10_1',
+        'xor_2_1',
+        'xor_3_1',
+        'xor_5_1',
+        'xor_10_1',
     ]
-    LOSS_RATES = [i / 100 for i in range(0, 15, 2)]  # 0% to 14%
+    LOSS_RATES = [i / 100 for i in range(0, 21, 2)]  # 0% to 20%
     TRIALS = 10
     BASE_SEED = 42
 
@@ -50,22 +54,34 @@ def main():
 
     # Print table
     print("\n=== Throughput (Mbps) ===")
-    header = "Loss% | " + " | ".join(f"{s:>10}" for s in STRATEGIES)
+    header = "Loss% | " + " | ".join(f"{s:>12}" for s in STRATEGIES)
     print(header)
     print("-" * len(header))
     for loss in LOSS_RATES:
         row = f"{loss:5.1%} |"
         for red in STRATEGIES:
             tp = results.get((loss, red), {'throughput': 0.0})['throughput']
-            row += f" {tp:10.2f} |"
+            row += f" {tp:12.2f} |"
+        print(row)
+
+    print("\n=== Average Queue Length ===")
+    header = "Loss% | " + " | ".join(f"{s:>12}" for s in STRATEGIES)
+    print(header)
+    print("-" * len(header))
+    for loss in LOSS_RATES:
+        row = f"{loss:5.1%} |"
+        for red in STRATEGIES:
+            q_len = results.get((loss, red), {'queue': 0.0})['queue']
+            row += f" {q_len:12.2f} |"
         print(row)
 
     # Save CSV
-    with open("sweep_results.csv", "w") as f:
-        f.write("LossRate,Strategy,AvgThroughput_Mbps,AvgQueue\n")
+    csv_filename = "threshold_test_results.csv"
+    with open(csv_filename, "w") as f:
+        f.write("LossRate,Strategy,AvgThroughput_Mbps,AvgQueueLength,ThroughputStd,QueueStd\n")
         for (loss, red), r in results.items():
-            f.write(f"{loss:.3f},{red},{r['throughput']:.3f},{r['queue']:.3f}\n")
-    print("\n✅ Results saved to sweep_results.csv")
+            f.write(f"{loss:.3f},{red},{r['throughput']:.3f},{r['queue']:.3f},{r['tp_std']:.3f},{r['q_std']:.3f}\n")
+    print(f"\n✅ Results saved to {csv_filename}")
 
 if __name__ == '__main__':
     main()
