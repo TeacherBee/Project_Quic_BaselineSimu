@@ -104,7 +104,7 @@ def main():
         'xor_10_1',
     ]
     LOSS_RATES = [i / 100 for i in range(0, 21, 2)]  # 0% to 20%
-    TRIALS = 2
+    TRIALS = 10
     BASE_SEED = 42
 
     print(f"Running sweep: {len(LOSS_RATES)} loss rates × {len(STRATEGIES)} strategies × {TRIALS} trials")
@@ -168,14 +168,14 @@ def main():
             avg_tp = results.get((loss, red), {'throughput': 0.0})['throughput']
             avg_q = results.get((loss, red), {'queue': 0.0})['queue']
             if avg_q != 0:
-                thr_rate = avg_tp / avg_q
+                thr_rate = avg_tp / (avg_q * 1250 * 8 / 1000000)  # eg.none: queue is 10k packets while every packet is 1250 bytes, then mem occpuancy is 100M bits
             else:
-                thr_rate = float('inf') # Handle potential division by zero gracefully
+                thr_rate = avg_tp / 100 # Handle potential division by zero gracefully
             row += f" {thr_rate:12.2f} |"
         print(row)
 
     # Save CSV (now includes Throughput Rate)
-    csv_filename = "threshold_test_results.csv"
+    csv_filename = "./result/threshold_test_results.csv"
     with open(csv_filename, "w") as f:
         f.write("LossRate,Strategy,AvgThroughput_Mbps,AvgQueueLength,ThroughputStd,QueueStd,AvgThroughputRate\n")
         for (loss, red), r in results.items():
