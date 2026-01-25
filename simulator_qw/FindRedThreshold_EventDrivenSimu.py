@@ -90,9 +90,9 @@ class FastSim:
 
         # --- Logging Setup - Separated ---
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Define separate log file names
-        self.log_tx_filename = f"log_tx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
-        self.log_rx_filename = f"log_rx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
+        # Define separate log file names with './log/' prefix
+        self.log_tx_filename = f"./log/log_tx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
+        self.log_rx_filename = f"./log/log_rx_{redundancy}_loss_{loss_rate:.2f}_{timestamp}.txt"
         
         # Open separate file handles
         try:

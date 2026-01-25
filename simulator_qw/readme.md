@@ -11,8 +11,8 @@ python sender.py 0.05 none(已弃用)
 python FindRedThreshold_script.py(已弃用)
 
 单次仿真(指定丢包率和策略)：
-python FindRedThreshold_EventDrivenSimu.py 0.05 none
-python FindRedThreshold_EventDrivenSimu.py 0.08 replicate
-python FindRedThreshold_EventDrivenSimu.py 0.05 erasure_4_2
+不冗余：python FindRedThreshold_EventDrivenSimu.py 0.05 none
+复制冗余(每x个包复制其中y个)：python FindRedThreshold_EventDrivenSimu.py 0.08 replicate_x_y
+复制冗余(每x个包生成1个纠错包)：python FindRedThreshold_EventDrivenSimu.py 0.05 xor_x_1
 批量脚本仿真：
-python FindRedThreshold_script.py
+python FindRedThreshold__EventDrivenScript.py
