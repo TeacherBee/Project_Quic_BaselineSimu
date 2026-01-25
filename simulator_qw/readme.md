@@ -17,3 +17,12 @@
 
 ## 批量脚本仿真：在文件里指定待测试策略
 python FindRedThreshold__EventDrivenScript.py
+
+
+
+### 模块化整体仿真框架 ./FPS-RedQ-xxxx-x
+primary.py : 初版模块化框架，已验证和FindRedThreshold_EventDrivenSimu.py结果一致
+
+## ./FPS-RedQ-0126-1
+redundancy.py : 
+main.py : 
