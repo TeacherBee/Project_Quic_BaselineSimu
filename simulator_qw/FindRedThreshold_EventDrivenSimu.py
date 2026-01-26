@@ -9,7 +9,7 @@ useLog = False
 
 class Config:
     B = 100e6               # 100 Mbps
-    RTT = 0.6               # 600 ms
+    RTT = 0.3               # 300 ms
     PKT_SIZE = 1250         # bytes
     FLOW_SIZE = 100 * 1024 * 1024  # 100 MB
     RTO = 1.0               # Timeout

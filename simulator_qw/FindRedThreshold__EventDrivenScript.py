@@ -175,7 +175,7 @@ def main():
         print(row)
 
     # Save CSV (now includes Throughput Rate)
-    csv_filename = "./result/threshold_test_results.csv"
+    csv_filename = "./result/threshold_test_results_300ms.csv"
     with open(csv_filename, "w") as f:
         f.write("LossRate,Strategy,AvgThroughput_Mbps,AvgQueueLength,ThroughputStd,QueueStd,AvgThroughputRate\n")
         for (loss, red), r in results.items():

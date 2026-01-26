@@ -23,7 +23,9 @@ python FindRedThreshold__EventDrivenScript.py
 ### 模块化整体仿真框架 ./FPS-RedQ-xxxx-x
 primary.py : 初版模块化框架，已验证和FindRedThreshold_EventDrivenSimu.py结果一致
 
-## ./FPS-RedQ-0126-1
-redundancy.py : 
-main.py : 
-$ python main.py 0.05 xor_x_1
+## ./FPS-RedQ-0126-1：由primary.py分离得到的两个文件
+redundancy.py : 冗余控制器，接收sn，根据冗余模式mode来返回待发送包列表
+main.py : 仿真类，main
+使用方法：python main.py 0.05 xor_x_1
+
+## ./FPS-RedQ-0126-2：

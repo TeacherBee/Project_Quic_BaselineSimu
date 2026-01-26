@@ -7,23 +7,35 @@ from redundancy import RedundancyManager
 useLog = False
 
 class Config:
-    B = 100e6               # 100 Mbps
-    RTT = 0.6               # 600 ms
     PKT_SIZE = 1250         # bytes
     FLOW_SIZE = 100 * 1024 * 1024  # 100 MB
     RTO = 1.0               # Timeout
 
+    # 链路 A
+    B_A = 100e6               # 100 Mbps
+    RTT_A = 0.3              # 300 ms
+    LOSS_RATE_A = 0.05       # 5% 丢包率
+    # 链路 B
+    B_B = 20e6               # 20 Mbps
+    RTT_B = 0.9              # 900 ms
+    LOSS_RATE_B = 0.1        # 10% 丢包率
+
 # --- 重构后的 FastSim 类 ---
 class FastSim:
-    def __init__(self, loss_rate, redundancy_mode):
-        self.loss_rate = loss_rate
-        
+    def __init__(self, loss_rate_a, loss_rate_b, redundancy_mode):     
         # 初始化冗余管理器
         self.redundancy_manager = RedundancyManager(redundancy_mode)
         
         cfg = Config()
-        self.B = cfg.B
-        self.RTT = cfg.RTT
+        # 链路 A 参数
+        self.B_A = cfg.B_A
+        self.RTT_A = cfg.RTT_A
+        self.loss_rate_a = loss_rate_a
+        # 链路 B 参数
+        self.B_B = cfg.B_B
+        self.RTT_B = cfg.RTT_B
+        self.loss_rate_b = loss_rate_b
+        # 其他参数
         self.PKT_SIZE = cfg.PKT_SIZE
         self.FLOW_SIZE = cfg.FLOW_SIZE
         self.RTO = cfg.RTO
