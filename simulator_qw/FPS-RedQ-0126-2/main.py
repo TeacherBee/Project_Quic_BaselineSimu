@@ -41,6 +41,10 @@ class FastSim:
         self.PKT_SIZE = cfg.PKT_SIZE
         self.FLOW_SIZE = cfg.FLOW_SIZE
         self.RTO = cfg.RTO
+
+        # FPS初始化，即慢路需要等快路先发的时间差和包数
+        self.delay_time_diff = self.RTT_B / 2 - self.RTT_A / 2  # 0.45 - 0.15 = 0.3 seconds
+        self.delay_packet_diff = self.delay_time_diff * (self.B_A / 8) / self.PKT_SIZE  # Convert bits to packets
         
         self.num_pkts = (self.FLOW_SIZE + self.PKT_SIZE - 1) // self.PKT_SIZE
         # Note: Original base_interval calculation used single 'B'. Now we calculate per path.
@@ -219,53 +223,59 @@ class FastSim:
         # According to FPS: Fast path sends a batch (s1 to s2), then slow path sends s2+1
         # Check if this sn is part of the current fast path batch
         # Use the variable name 'next_expected_fast_start_sn' for clarity if needed, but using existing var
-        if self.last_fast_sn < self.current_batch_start_sn + self.batch_size - 1:
-            # self.log_tx_event(f"[FPS222] now original_sn :  {original_sn}; last_fast_sn : {self.last_fast_sn}; self.current_batch_start_sn + self.batch_size - 1 : {self.current_batch_start_sn + self.batch_size - 1}")
-            # Send on fast path A
+
+        if original_sn < self.delay_packet_diff:
             path = self.fast_path
             self.last_fast_sn = original_sn
-            # If this was the last packet of the current fast batch
-            if self.last_fast_sn == self.current_batch_start_sn + self.batch_size - 1:
-                # DO NOT update self.current_batch_start_sn here yet.
-                # It will be updated when the slow packet (last_fast_sn + 1) is processed.
-                # The slow packet to send is last_fast_sn + 1
-                self.log_tx_event(f"[FPS] Fast batch [{self.last_fast_sn - self.batch_size + 1}, {self.last_fast_sn}] completed. Waiting for slow packet {self.last_fast_sn + 1} before updating next fast batch start.")
+
         else:
-            # This packet should be the slow packet (s2+1) following the fast batch
-            # Or it might be the start of a new fast batch if it follows the previous slow packet
-            expected_slow_sn = self.last_fast_sn + 1
-            # self.log_tx_event(f"[FPS111] now original_sn :  {original_sn}; last_fast_sn : {self.last_fast_sn}; expected_slow_sn : {expected_slow_sn}")
-            if original_sn == expected_slow_sn:
-                # Send on slow path B
-                path = self.slow_path
-                self.last_slow_sn = original_sn
-                # NOW update the start of the next fast batch, as the slow packet has been handled.
-                self.current_batch_start_sn = self.last_slow_sn + 1
-                self.log_tx_event(f"[FPS] Sent slow packet {original_sn}. Next fast batch starts at {self.current_batch_start_sn}.")
+            if self.last_fast_sn < self.current_batch_start_sn + self.batch_size - 1:
+                # self.log_tx_event(f"[FPS222] now original_sn :  {original_sn}; last_fast_sn : {self.last_fast_sn}; self.current_batch_start_sn + self.batch_size - 1 : {self.current_batch_start_sn + self.batch_size - 1}")
+                # Send on fast path A
+                path = self.fast_path
+                self.last_fast_sn = original_sn
+                # If this was the last packet of the current fast batch
+                if self.last_fast_sn == self.current_batch_start_sn + self.batch_size - 1:
+                    # DO NOT update self.current_batch_start_sn here yet.
+                    # It will be updated when the slow packet (last_fast_sn + 1) is processed.
+                    # The slow packet to send is last_fast_sn + 1
+                    self.log_tx_event(f"[FPS] Fast batch [{self.last_fast_sn - self.batch_size + 1}, {self.last_fast_sn}] completed. Waiting for slow packet {self.last_fast_sn + 1} before updating next fast batch start.")
             else:
-                # This case handles packets that don't strictly follow the FPS s1-s2-s2+1 pattern.
-                # This might occur if the initial window fills beyond the first batch,
-                # or if redundancy creates extra packets out of the strict sequence.
-                # For simplicity in FPS, we'll still route them according to the pattern logic.
-                # If the sequence number is exactly one more than the last slow packet, it's the next fast batch starter
-                if original_sn == self.last_slow_sn + 1:
-                    path = self.fast_path
-                    self.last_fast_sn = original_sn
-                    # This packet becomes the start of a new fast batch
-                    # Update current_batch_start_sn only if necessary, maybe redundant if already set correctly after prev slow pkt
-                    # self.current_batch_start_sn = original_sn # Keep commented or remove, as it should already be correct
-                    # It's possible that after a slow packet, the next fast batch start is already set correctly by the slow packet handler.
-                    # Only update if the logic requires it differently.
-                    # Let's re-evaluate: if last_slow_sn was N, then the slow packet handler sets current_batch_start_sn = N + 1.
-                    # If original_sn is N+1, it matches the already set value. No update needed here.
-                    self.log_tx_event(f"[FPS] Packet {original_sn} continues fast path after slow packet (starts at {self.current_batch_start_sn}).")
+                # This packet should be the slow packet (s2+1) following the fast batch
+                # Or it might be the start of a new fast batch if it follows the previous slow packet
+                expected_slow_sn = self.last_fast_sn + 1
+                # self.log_tx_event(f"[FPS111] now original_sn :  {original_sn}; last_fast_sn : {self.last_fast_sn}; expected_slow_sn : {expected_slow_sn}")
+                if original_sn == expected_slow_sn:
+                    # Send on slow path B
+                    path = self.slow_path
+                    self.last_slow_sn = original_sn
+                    # NOW update the start of the next fast batch, as the slow packet has been handled.
+                    self.current_batch_start_sn = self.last_slow_sn + 1
+                    self.log_tx_event(f"[FPS] Sent slow packet {original_sn}. Next fast batch starts at {self.current_batch_start_sn}.")
                 else:
-                    # Default to fast path if it doesn't fit the immediate slow/fast pattern
-                    # This covers cases like initial window packets beyond the first batch
-                    # Note: This default might still be problematic if packets arrive out of order significantly
-                    path = self.fast_path
-                    self.last_fast_sn = original_sn
-                    self.log_tx_event(f"[FPS] Packet {original_sn} routed to fast path (default/initial window).")
+                    # This case handles packets that don't strictly follow the FPS s1-s2-s2+1 pattern.
+                    # This might occur if the initial window fills beyond the first batch,
+                    # or if redundancy creates extra packets out of the strict sequence.
+                    # For simplicity in FPS, we'll still route them according to the pattern logic.
+                    # If the sequence number is exactly one more than the last slow packet, it's the next fast batch starter
+                    if original_sn == self.last_slow_sn + 1:
+                        path = self.fast_path
+                        self.last_fast_sn = original_sn
+                        # This packet becomes the start of a new fast batch
+                        # Update current_batch_start_sn only if necessary, maybe redundant if already set correctly after prev slow pkt
+                        # self.current_batch_start_sn = original_sn # Keep commented or remove, as it should already be correct
+                        # It's possible that after a slow packet, the next fast batch start is already set correctly by the slow packet handler.
+                        # Only update if the logic requires it differently.
+                        # Let's re-evaluate: if last_slow_sn was N, then the slow packet handler sets current_batch_start_sn = N + 1.
+                        # If original_sn is N+1, it matches the already set value. No update needed here.
+                        self.log_tx_event(f"[FPS] Packet {original_sn} continues fast path after slow packet (starts at {self.current_batch_start_sn}).")
+                    else:
+                        # Default to fast path if it doesn't fit the immediate slow/fast pattern
+                        # This covers cases like initial window packets beyond the first batch
+                        # Note: This default might still be problematic if packets arrive out of order significantly
+                        path = self.fast_path
+                        self.last_fast_sn = original_sn
+                        self.log_tx_event(f"[FPS] Packet {original_sn} routed to fast path (default/initial window).")
 
         # --- CORRECTED Send Time Calculation Logic ---
         path_intervals = {'A': self.PKT_SIZE * 8 / self.B_A, 'B': self.PKT_SIZE * 8 / self.B_B}
@@ -275,6 +285,7 @@ class FastSim:
         if path == 'A':
             # New send time is the last send time on A plus the transmission time of one packet on A
             # Use max to ensure send time doesn't go back in time relative to base_time if needed
+            # self.log_tx_event(f"[aaaaaa] base_time :  {base_time}; last_send_time_A : {self.last_send_time_A}; path_intervals['A'] : {path_intervals['A']}")
             send_time = max(base_time, self.last_send_time_A + path_intervals['A'])
             self.last_send_time_A = send_time # Update the last send time for path A
         elif path == 'B':
@@ -286,6 +297,8 @@ class FastSim:
             # Handle unexpected path, fallback to original base_time
             send_time = base_time
             self.log_tx_event(f"WARNING: Unexpected path {path} for packet {original_sn}")
+
+        # self.log_tx_event(f"[bbbbbb] now original_sn :  {original_sn}; last_fast_sn : {self.last_fast_sn}; send_time : {send_time:.4f}; path : {path}")
 
         # Call the path-specific sending function
         self._send_packet_on_path(original_sn, send_time, path)
@@ -402,13 +415,14 @@ class FastSim:
                 selective = [s for s in self.receiver_buffer if s > cumulative]
                 self.log_rx_event(f"[{t:.4f}]  -> Sending ACK: Cumulative={cumulative}, Selective={selective}")
 
-                ack_arrival_time = t + self.RTT_A / 2  # ACK 走快路径
+                ack_arrival_time = t + self.RTT_A / 2
                 self.schedule(ack_arrival_time, 'ack', {'cumulative': cumulative, 'selective': selective})
 
                 while (self.next_sn < self.num_pkts and
                        (self.next_sn - (self.next_expected - 1)) < self.max_window):
                     # Use a placeholder base time; actual MPS timing is handled by the specific algorithm function
-                    self._send_packet(self.next_sn, t)
+                    send_time = self.next_sn * self.PKT_SIZE * 8 / self.B_A
+                    self._send_packet(self.next_sn, send_time)
                     self.next_sn += 1
 
             else: # sn > next_expected
