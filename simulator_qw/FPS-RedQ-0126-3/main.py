@@ -6,7 +6,7 @@ from redundancy import RedundancyManager
 
 useLog = True
 
-sendMode = 'SP'  # FPS/SP
+sendMode = 'RSR'  # FPS / SP(single path) / RSR（Redundant Stream Routing）
 
 class Config:
     PKT_SIZE = 1250         # bytes
@@ -144,6 +144,35 @@ class FastSim:
         self.close_log_tx()
         self.close_log_rx()
 
+    def _should_send_redundancy_on_bad_path(self):
+        """
+        Enhanced decision: compare expected recovery time.
+        Returns True if sending redundancy on bad path (B) yields lower expected recovery time.
+        """
+        L_A = self.loss_rate_a
+        L_B = self.loss_rate_b
+        T_A = self.RTT_A
+        T_B = self.RTT_B
+        RTO = self.RTO
+
+        # Avoid division by zero or degenerate cases
+        if L_A <= 0:
+            return False  # No loss on A, no need for redundancy on B
+        if L_B >= 1.0:
+            return False  # B always drops, useless
+
+        # Expected recovery time if redundancy stays on A
+        E1 = T_A + (L_A ** 2) * RTO
+
+        # Expected recovery time if redundancy goes to B
+        term1 = (1 - L_A) * T_A
+        term2 = L_A * (1 - L_B) * (T_A + T_B) / 2.0
+        term3 = L_A * L_B * (RTO + T_A)
+        E2 = term1 + term2 + term3
+
+        return True
+        return E2 < E1
+    
     def schedule(self, t, ev_type, data=None):
         heapq.heappush(self.events, (t, self.event_id, ev_type, data))
         self.event_id += 1
@@ -209,8 +238,78 @@ class FastSim:
             self.fps_send_packet(original_sn, base_time)
         elif sendMode == 'SP':
             self.sp_send_packet(original_sn, base_time)
+        elif sendMode == 'RSR':
+            self.rsr_send_packet(original_sn, base_time)
         else:
             raise ValueError(f"Unsupported sendMode: {sendMode}")
+
+    def _send_physical_packet_on_path(self, sn, send_time, path, is_redundant=False, pkt_type='data'):
+        """
+        Send a single physical packet (no redundancy expansion).
+        Used by RSR and other advanced modes that pre-expand packets.
+        """
+        if path == 'A':
+            loss_rate = self.loss_rate_a
+            rtt = self.RTT_A
+        elif path == 'B':
+            loss_rate = self.loss_rate_b
+            rtt = self.RTT_B
+        else:
+            raise ValueError(f"Unknown path: {path}")
+
+        # Simulate loss
+        if random.random() >= loss_rate:
+            arrive_time = send_time + rtt / 2
+            self.schedule(arrive_time, 'arrive', {'sn': sn, 'path': path})
+            log_type = "REPLICATE" if is_redundant and pkt_type != 'xor' else \
+                    "XOR" if pkt_type == 'xor' else \
+                    "REPLICATE_K_1" if is_redundant else \
+                    "ORIGINAL"
+            self.log_tx_event(f"[SEND] Scheduling {log_type} packet {sn} on Path {path} arrival at {arrive_time:.4f}")
+        else:
+            log_type = "REPLICATE" if is_redundant and pkt_type != 'xor' else \
+                    "XOR" if pkt_type == 'xor' else \
+                    "REPLICATE_K_1" if is_redundant else \
+                    "ORIGINAL"
+            self.log_tx_event(f"[SEND] {log_type} packet {sn} on Path {path} LOST at {send_time:.4f}")
+
+    def rsr_send_packet(self, original_sn, base_time):
+        if original_sn >= self.num_pkts:
+            return
+
+        packets_to_send = self.redundancy_manager.get_packets_to_send(original_sn)
+        use_bad_path = self._should_send_redundancy_on_bad_path()
+
+        for idx, pkt_info in enumerate(packets_to_send):
+            sn = pkt_info['sn']
+            is_redundant = pkt_info.get('is_redundant', False)
+            pkt_type = pkt_info.get('type', 'data')
+
+            if idx == 0:
+                # Original packet → path A
+                path = 'A'
+                interval = self.PKT_SIZE * 8 / self.B_A
+                send_time = max(base_time, self.last_send_time_A + interval)
+                self.last_send_time_A = send_time
+            else:
+                # Redundancy packet
+                if use_bad_path and self.B_B > 0:
+                    path = 'B'
+                    interval = self.PKT_SIZE * 8 / self.B_B
+                    send_time = max(base_time, self.last_send_time_B + interval)
+                    self.last_send_time_B = send_time
+                else:
+                    path = 'A'
+                    interval = self.PKT_SIZE * 8 / self.B_A
+                    send_time = max(base_time, self.last_send_time_A + interval)
+                    self.last_send_time_A = send_time
+
+            self._send_physical_packet_on_path(sn, send_time, path, is_redundant, pkt_type)
+
+        # Set timeout only for the original logical packet
+        self.unacked[original_sn] = (base_time, 'A')
+        self.schedule(base_time + self.RTO, 'timeout', {'sn': original_sn, 'path': 'A'})
+       
 
     def sp_send_packet(self, original_sn, base_time):
         """ Implements Single Path (SP) sending: all packets go through fast path A. """
@@ -321,63 +420,29 @@ class FastSim:
 
 
     def _send_packet_on_path(self, original_sn, send_time, path):
-        """
-        Core sending logic for a single packet on a specific path (A or B).
-        This replaces the original _send_packet logic, adding path awareness.
-        """
+        """ Legacy function for FPS/SP: expands redundancy internally. """
         if original_sn >= self.num_pkts:
             return
 
-        # Get parameters for the specific path
-        if path == 'A':
-            base_pkt_time = self.PKT_SIZE * 8 / self.B_A
-            loss_rate = self.loss_rate_a
-            rtt = self.RTT_A
-        elif path == 'B':
-            base_pkt_time = self.PKT_SIZE * 8 / self.B_B
-            loss_rate = self.loss_rate_b
-            rtt = self.RTT_B
-        else:
-            raise ValueError(f"Unknown path: {path}")
-
-        # 🔧 使用冗余管理器获取要发送的物理包列表
         packets_to_send = self.redundancy_manager.get_packets_to_send(original_sn)
-        
-        # 发送所有物理包
-        current_send_offset = 0.0
-        for i, pkt_info in enumerate(packets_to_send):
-            sn_to_schedule = pkt_info['sn']
+        current_offset = 0.0
+
+        if path == 'A':
+            base_interval = self.PKT_SIZE * 8 / self.B_A
+        else:
+            base_interval = self.PKT_SIZE * 8 / self.B_B
+
+        for pkt_info in packets_to_send:
+            sn = pkt_info['sn']
             is_redundant = pkt_info.get('is_redundant', False)
             pkt_type = pkt_info.get('type', 'data')
+            physical_time = send_time + current_offset
+            self._send_physical_packet_on_path(sn, physical_time, path, is_redundant, pkt_type)
+            current_offset += base_interval
 
-            # 计算此物理包的发送时间
-            physical_send_time = send_time + current_send_offset
-
-            # 决定是否丢失
-            if random.random() >= loss_rate:
-                arrive_time = physical_send_time + rtt / 2
-                # self.log_tx_event(f"[aaaaaaaaa] arrive_time is  {arrive_time:.4f}, physical_send_time is {physical_send_time:.4f}, send_time is {send_time}")
-                # Pass path information to the event
-                self.schedule(arrive_time, 'arrive', {'sn': sn_to_schedule, 'path': path})
-                log_type = "REPLICATE" if is_redundant and pkt_type != 'xor' else \
-                           "XOR" if pkt_type == 'xor' else \
-                           "REPLICATE_K_1" if is_redundant else \
-                           "ORIGINAL"
-                self.log_tx_event(f"[SEND] Scheduling {log_type} packet {sn_to_schedule} on Path {path} arrival at {arrive_time:.4f}")
-            else:
-                log_type = "REPLICATE" if is_redundant and pkt_type != 'xor' else \
-                           "XOR" if pkt_type == 'xor' else \
-                           "REPLICATE_K_1" if is_redundant else \
-                           "ORIGINAL"
-                self.log_tx_event(f"[SEND] {log_type} packet {sn_to_schedule} on Path {path} LOST at {physical_send_time:.4f}")
-
-            # 更新下一个物理包的发送偏移
-            current_send_offset += base_pkt_time
-
-        # 只为原始包设置超时和未确认状态, including the path
-        self.unacked[original_sn] = (send_time, path) # Store time and path
+        # Set timeout for original packet
+        self.unacked[original_sn] = (send_time, path)
         self.schedule(send_time + self.RTO, 'timeout', {'sn': original_sn, 'path': path})
-
 
     def _on_arrival(self, t, pkt_identifier, path_received='N/A'):
         sn = pkt_identifier
