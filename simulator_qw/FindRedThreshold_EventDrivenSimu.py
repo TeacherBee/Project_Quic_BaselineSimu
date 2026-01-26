@@ -376,7 +376,7 @@ class FastSim:
                 self.schedule(t + 1e-9, 'ack', {'cumulative': cumulative, 'selective': selective})
 
         if self.mode == 'xor_k_1':
-            if (-sn + 1) % self.k_rep == 0 and sn != 0:
+            if (-sn + 1) % self.k_rep == 0 and sn != 0 and sn < 0:
                 new_group_start = -sn + 1
                 if new_group_start != self.current_group_start:
                     self.log_rx_event(f"[{t:.4f}]  -> Packet {sn} triggers a new XOR group starting at {new_group_start}. Clearing old group status.")

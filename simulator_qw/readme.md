@@ -26,3 +26,4 @@ primary.py : 初版模块化框架，已验证和FindRedThreshold_EventDrivenSim
 ## ./FPS-RedQ-0126-1
 redundancy.py : 
 main.py : 
+$ python main.py 0.05 xor_x_1
