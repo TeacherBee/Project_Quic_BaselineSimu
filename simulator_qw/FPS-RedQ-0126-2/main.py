@@ -110,6 +110,12 @@ class FastSim:
                 print(f"Error opening log files: {e}", file=sys.stderr)
                 raise
 
+        # --- Add variables to track path-specific send times ---
+        # Initialize to a time before the simulation starts to ensure the first packet is sent at time 0 or base_time
+        self.last_send_time_A = - (self.PKT_SIZE * 8 / self.B_A)
+        self.last_send_time_B = - (self.PKT_SIZE * 8 / self.B_B)
+
+
     def log_tx_event(self, message):
         if hasattr(self, 'log_tx_handle') and self.log_tx_handle and useLog:
             self.log_tx_handle.write(message + "\n")
@@ -261,24 +267,25 @@ class FastSim:
                     self.last_fast_sn = original_sn
                     self.log_tx_event(f"[FPS] Packet {original_sn} routed to fast path (default/initial window).")
 
-        # --- Send Time Calculation Logic (Unchanged) ---
-        # Calculate send time based on the chosen path's characteristics if needed
-        # For FPS, we might want to space packets closely on the fast path relative to the slow path's capacity
-        # A simple approach: use a fixed interval per path or base it on the original single-path interval
-        # Here, we use a simple per-path interval based on the original logic conceptually.
-        # Let's calculate send time based on the last packet sent on *this specific path*.
-        # We need a way to track path-specific send times.
-        # A simpler approximation for initial FPS might be to use the original base_time directly.
-        # A more accurate model would consider path-specific pacing.
-        # For now, let's use the base_time and let _send_packet_on_path handle path-specific delays.
-        # We need to pass the correct send time calculation per path.
-        # Let's define path-specific intervals.
+        # --- CORRECTED Send Time Calculation Logic ---
         path_intervals = {'A': self.PKT_SIZE * 8 / self.B_A, 'B': self.PKT_SIZE * 8 / self.B_B}
-        # Get the last SN sent on this path
-        last_sn_on_path = self.last_fast_sn if path == 'A' else self.last_slow_sn
+
         # Calculate send time based on the last packet sent on the target path
-        # This assumes sequential sending on each path
-        send_time = base_time + (original_sn - last_sn_on_path - 1) * path_intervals[path]
+        # This ensures packets are spaced according to the path's bandwidth
+        if path == 'A':
+            # New send time is the last send time on A plus the transmission time of one packet on A
+            # Use max to ensure send time doesn't go back in time relative to base_time if needed
+            send_time = max(base_time, self.last_send_time_A + path_intervals['A'])
+            self.last_send_time_A = send_time # Update the last send time for path A
+        elif path == 'B':
+            # New send time is the last send time on B plus the transmission time of one packet on B
+            # Use max to ensure send time doesn't go back in time relative to base_time if needed
+            send_time = max(base_time, self.last_send_time_B + path_intervals['B'])
+            self.last_send_time_B = send_time # Update the last send time for path B
+        else:
+            # Handle unexpected path, fallback to original base_time
+            send_time = base_time
+            self.log_tx_event(f"WARNING: Unexpected path {path} for packet {original_sn}")
 
         # Call the path-specific sending function
         self._send_packet_on_path(original_sn, send_time, path)
@@ -320,6 +327,7 @@ class FastSim:
             # 决定是否丢失
             if random.random() >= loss_rate:
                 arrive_time = physical_send_time + rtt / 2
+                # self.log_tx_event(f"[aaaaaaaaa] arrive_time is  {arrive_time:.4f}, physical_send_time is {physical_send_time:.4f}, send_time is {send_time}")
                 # Pass path information to the event
                 self.schedule(arrive_time, 'arrive', {'sn': sn_to_schedule, 'path': path})
                 log_type = "REPLICATE" if is_redundant and pkt_type != 'xor' else \
@@ -393,7 +401,9 @@ class FastSim:
                 cumulative = self.next_expected - 1
                 selective = [s for s in self.receiver_buffer if s > cumulative]
                 self.log_rx_event(f"[{t:.4f}]  -> Sending ACK: Cumulative={cumulative}, Selective={selective}")
-                self.schedule(t + 1e-9, 'ack', {'cumulative': cumulative, 'selective': selective})
+
+                ack_arrival_time = t + self.RTT_A / 2  # ACK 走快路径
+                self.schedule(ack_arrival_time, 'ack', {'cumulative': cumulative, 'selective': selective})
 
                 while (self.next_sn < self.num_pkts and
                        (self.next_sn - (self.next_expected - 1)) < self.max_window):

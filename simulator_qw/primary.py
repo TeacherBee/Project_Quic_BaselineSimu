@@ -336,7 +336,7 @@ class FastSim:
                 cumulative = self.next_expected - 1
                 selective = [s for s in self.receiver_buffer if s > cumulative]
                 self.log_rx_event(f"[{t:.4f}]  -> Sending ACK: Cumulative={cumulative}, Selective={selective}")
-                self.schedule(t + 1e-9, 'ack', {'cumulative': cumulative, 'selective': selective})
+                self.schedule(t + self.RTT / 2, 'ack', {'cumulative': cumulative, 'selective': selective})
 
                 while (self.next_sn < self.num_pkts and
                        (self.next_sn - (self.next_expected - 1)) < self.max_window):
