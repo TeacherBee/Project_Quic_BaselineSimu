@@ -6,7 +6,7 @@ from redundancy import RedundancyManager
 
 useLog = True
 
-sendMode = 'FPS'  # Currently only FPS is implemented
+sendMode = 'SP'  # FPS/SP
 
 class Config:
     PKT_SIZE = 1250         # bytes
@@ -207,9 +207,25 @@ class FastSim:
         # Currently, we only have FPS implemented.
         if sendMode == 'FPS':
             self.fps_send_packet(original_sn, base_time)
+        elif sendMode == 'SP':
+            self.sp_send_packet(original_sn, base_time)
         else:
-            self.fps_send_packet(original_sn, base_time)  # change later
+            raise ValueError(f"Unsupported sendMode: {sendMode}")
 
+    def sp_send_packet(self, original_sn, base_time):
+        """ Implements Single Path (SP) sending: all packets go through fast path A. """
+        if original_sn >= self.num_pkts:
+            return
+
+        path = 'A'  # Use only the fast path
+
+        # Calculate send time based on last packet sent on path A
+        path_interval_A = self.PKT_SIZE * 8 / self.B_A
+        send_time = max(base_time, self.last_send_time_A + path_interval_A)
+        self.last_send_time_A = send_time
+
+        self._send_packet_on_path(original_sn, send_time, path)
+    
     def fps_send_packet(self, original_sn, base_time):
         """
         Implements the FPS (Fast Path Slow Path) algorithm logic.
