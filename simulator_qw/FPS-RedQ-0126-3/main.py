@@ -170,7 +170,6 @@ class FastSim:
         term3 = L_A * L_B * (RTO + T_A)
         E2 = term1 + term2 + term3
 
-        return True
         return E2 < E1
     
     def schedule(self, t, ev_type, data=None):
