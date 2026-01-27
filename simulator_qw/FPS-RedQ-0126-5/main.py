@@ -13,12 +13,12 @@ class Config:
 
     # 链路 A (快路径)
     B_A = 100e6             # 100 Mbps
-    RTT_A = 0.05            # 50 ms one-way → 100ms RTT? But you use /2 later, so keep as is
+    RTT_A = 0.2            # 50 ms one-way → 100ms RTT? But you use /2 later, so keep as is
     LOSS_RATE_A = 0.05
 
     # 链路 B (慢路径)
     B_B = 20e6              # 20 Mbps
-    RTT_B = 0.15            # 150 ms one-way
+    RTT_B = 0.4            # 150 ms one-way
     LOSS_RATE_B = 0.2
 
     FLOW_SIZE_THRESHOLD = B_A / 2 / 8  # unused in new mode, but kept
@@ -53,20 +53,23 @@ def determine_redundancy_mode(loss_rate_a):
 
 # --- FastSim: unchanged except for is_large_flow_override ---
 class FastSim:
-    def __init__(self, loss_rate_a, loss_rate_b, redundancy_mode, flow, is_large_flow_override=None):     
+    def __init__(self, loss_rate_a_func, loss_rate_b_func, redundancy_mode, flow, is_large_flow_override=None):      
         self.redundancy_manager = RedundancyManager(redundancy_mode)
         
         cfg = Config()
         self.B_A = cfg.B_A
         self.RTT_A = cfg.RTT_A
-        self.loss_rate_a = loss_rate_a
+        # self.loss_rate_a = loss_rate_a
+        self.loss_rate_a_func = loss_rate_a_func
+        self.loss_rate_b_func = loss_rate_b_func
         self.B_B = cfg.B_B
         self.RTT_B = cfg.RTT_B
-        self.loss_rate_b = loss_rate_b
+        # self.loss_rate_b = loss_rate_b
         self.PKT_SIZE = cfg.PKT_SIZE
         self.flow_total_bytes = flow.total_bytes
         self.RTO = cfg.RTO
         self.threshold = cfg.FLOW_SIZE_THRESHOLD
+        self.arrival_time = flow.arrival_time
 
         # ✅ Use external large-flow decision
         if is_large_flow_override is not None:
@@ -111,14 +114,16 @@ class FastSim:
         self.last_send_time_B = - (self.PKT_SIZE * 8 / self.B_B)
 
         if useLog:
+            initial_loss_a = self.loss_rate_a_func(self.arrival_time)
+            initial_loss_b = self.loss_rate_b_func(self.arrival_time)
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.log_tx_filename = f"./log/log_tx_{redundancy_mode}_loss_{loss_rate_a:.2f}_{loss_rate_b:.2f}_{timestamp}.txt"
-            self.log_rx_filename = f"./log/log_rx_{redundancy_mode}_loss_{loss_rate_a:.2f}_{loss_rate_b:.2f}_{timestamp}.txt"
+            self.log_tx_filename = f"./log/log_tx_{redundancy_mode}_loss_{initial_loss_a:.2f}_{initial_loss_b:.2f}_{timestamp}.txt"
+            self.log_rx_filename = f"./log/log_rx_{redundancy_mode}_loss_{initial_loss_a:.2f}_{initial_loss_b:.2f}_{timestamp}.txt"
             try:
                 self.log_tx_handle = open(self.log_tx_filename, 'w')
                 self.log_rx_handle = open(self.log_rx_filename, 'w')
                 header_info = f"--- Simulation Log Started at {datetime.datetime.now()} ---\n"
-                config_info = f"Mode: {self.redundancy_manager.mode}, k: {self.redundancy_manager.k_rep}, Loss Rates: A={self.loss_rate_a}, B={self.loss_rate_b}\nTotal Packets: {self.num_pkts}\n\n"
+                config_info = f"Mode: {self.redundancy_manager.mode}, k: {self.redundancy_manager.k_rep}, Loss Rates: A={initial_loss_a:.2f}, B={initial_loss_b:.2f}\nTotal Packets: {self.num_pkts}\n\n"
                 self.log_tx_handle.write(header_info + "LOG TYPE: TRANSMISSION EVENTS\n" + config_info)
                 self.log_rx_handle.write(header_info + "LOG TYPE: RECEPTION EVENTS\n" + config_info)
                 self.log_tx_handle.flush()
@@ -165,8 +170,10 @@ class FastSim:
         self.close_log_rx()
 
     def _should_send_redundancy_on_bad_path(self):
-        L_A = self.loss_rate_a
-        L_B = self.loss_rate_b
+        loss_rate_a = self.loss_rate_a_func(self.arrival_time)
+        loss_rate_b = self.loss_rate_b_func(self.arrival_time)
+        L_A = loss_rate_a
+        L_B = loss_rate_b
         T_A = self.RTT_A
         T_B = self.RTT_B
         RTO = self.RTO
@@ -189,7 +196,7 @@ class FastSim:
 
     def run(self):
         self.log_rx_event("--- Simulation Run Started ---")
-        base_initial_time = 0.0
+        base_initial_time = self.arrival_time
         for sn in range(min(self.max_window, self.num_pkts)):
             self._send_packet(sn, base_initial_time)
 
@@ -239,7 +246,12 @@ class FastSim:
             raise ValueError(f"Unsupported sendMode: {self.sendMode}")
 
     def _send_physical_packet_on_path(self, sn, send_time, path, is_redundant=False, pkt_type='data'):
-        loss_rate = self.loss_rate_a if path == 'A' else self.loss_rate_b
+        # ✅ 动态丢包率：根据发送时间查询
+        if path == 'A':
+            loss_rate = self.loss_rate_a_func(send_time)
+        else:
+            loss_rate = self.loss_rate_b_func(send_time)
+
         rtt = self.RTT_A if path == 'A' else self.RTT_B
 
         if random.random() >= loss_rate:
@@ -444,7 +456,11 @@ class FastSim:
     def _retransmit(self, t, sn, path_for_retransmit):
         if sn not in self.unacked:
             return
-        loss_rate = self.loss_rate_a if path_for_retransmit == 'A' else self.loss_rate_b
+        # ✅ Use current time 't' for loss rate
+        if path_for_retransmit == 'A':
+            loss_rate = self.loss_rate_a_func(t)
+        else:
+            loss_rate = self.loss_rate_b_func(t)
         rtt = self.RTT_A if path_for_retransmit == 'A' else self.RTT_B
         if random.random() >= loss_rate:
             arrive_time = t + rtt / 2
@@ -460,9 +476,9 @@ class FastSim:
 # Multi-Flow Runner
 # ======================
 class MultiFlowRunner:
-    def __init__(self, loss_rate_a, loss_rate_b, flows):
-        self.loss_rate_a = loss_rate_a
-        self.loss_rate_b = loss_rate_b
+    def __init__(self, loss_rate_a_func, loss_rate_b_func, flows):
+        self.loss_rate_a_func = loss_rate_a_func
+        self.loss_rate_b_func = loss_rate_b_func
         self.flows = sorted(flows, key=lambda f: f.arrival_time)
         self.allocated_bw = 0.0
         self.B_A = Config().B_A
@@ -474,10 +490,11 @@ class MultiFlowRunner:
             is_large = flow.rate_bps > remaining_bw
             self.allocated_bw += flow.rate_bps
 
-            redundancy_mode = determine_redundancy_mode(self.loss_rate_a)
+            current_loss_a = self.loss_rate_a_func(flow.arrival_time)
+            redundancy_mode = determine_redundancy_mode(current_loss_a)
             sim = FastSim(
-                loss_rate_a=self.loss_rate_a,
-                loss_rate_b=self.loss_rate_b,
+                loss_rate_a_func=self.loss_rate_a_func,
+                loss_rate_b_func=self.loss_rate_b_func,
                 redundancy_mode=redundancy_mode,
                 flow=flow,
                 is_large_flow_override=is_large
@@ -494,10 +511,11 @@ class MultiFlowRunner:
 # ======================
 def generate_bursty_flows():
     flows = []
-    rates = [40e6, 30e6, 80e6, 125e6, 25e6]  # Total 150 Mbps > 100 Mbps
+    rates = [40e6, 80e6, 125e6, 20e6, 60e6]
+    duration = 3.0
     for i, rate in enumerate(rates):
-        arrival = random.uniform(0.0, 1.0)
-        flows.append(Flow(flow_id=i, arrival_time=arrival, rate_bps=rate, duration_sec=3.0))
+        arrival = i * duration
+        flows.append(Flow(flow_id=i, arrival_time=arrival, rate_bps=rate, duration_sec=duration))
     return flows
 
 def generate_mixed_flows():
@@ -508,6 +526,47 @@ def generate_mixed_flows():
     flows.append(Flow(flow_id=3, arrival_time=0.8, rate_bps=50e6, duration_sec=4))
     return flows
 
+# 示例 1：固定丢包率（兼容旧用法）
+def constant_loss(rate):
+    return lambda t: rate
+
+# 示例 2：周期性高丢包（每 5 秒，第 4～5 秒丢包率 0.3）
+def periodic_bursty_loss(baseline=0.05, burst_rate=0.3, period=150.0, burst_duration=3.0):
+    def func(t):
+        phase = t % period
+        if phase >= (period - burst_duration):
+            return burst_rate
+        else:
+            return baseline
+    return func
+
+# 示例 3：随机突发（简单版：每整数秒有 20% 概率进入 2 秒高丢包）
+def random_burst_loss(baseline=0.05, burst_rate=0.4, burst_duration=2.0, burst_prob=0.2):
+    bursts = {}  # cache to keep burst consistent during duration
+    def func(t):
+        base_sec = int(t)
+        if base_sec not in bursts:
+            bursts[base_sec] = (random.random() < burst_prob)
+        if bursts[base_sec]:
+            # check if within burst window
+            if t < (base_sec + burst_duration):
+                return burst_rate
+        return baseline
+    return func
+
+def targeted_burst_loss():
+    def func(t):
+        if 9.0 <= t < 12.0:
+            return 0.30  # 30% 高丢包
+        else:
+            # 1% ～ 5% 随机波动（为保证可重现，用 deterministic hash 或固定 seed）
+            # 方法：用 t 的小数部分生成伪随机值
+            import math
+            # 简单 deterministic noise: sin-based or fractional part
+            noise = (math.sin(t * 1000) + 1) / 2  # [0, 1]
+            return 0.01 + 0.04 * noise  # => [0.01, 0.05]
+    return func
+
 
 # ======================
 # Main
@@ -517,7 +576,11 @@ def main():
     flows = generate_bursty_flows()
     # flows = generate_mixed_flows()
 
-    runner = MultiFlowRunner(loss_rate_a=0.05, loss_rate_b=0.2, flows=flows)
+     # ✅ 定义动态丢包率函数
+    loss_a = targeted_burst_loss()
+    loss_b = constant_loss(0.1)  # 备链路仍固定
+
+    runner = MultiFlowRunner(loss_rate_a_func=loss_a, loss_rate_b_func=loss_b, flows=flows)
     results = runner.run()
 
     print("\n=== FINAL RESULTS ===")
