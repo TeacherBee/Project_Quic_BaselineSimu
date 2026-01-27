@@ -4,21 +4,21 @@ import sys
 import datetime
 from redundancy import RedundancyManager
 
-useLog = True
+useLog = False
 
 class Config:
     PKT_SIZE = 1250         # bytes
     FLOW_SIZE = 1 * 1024 * 1024  # 100 MB
-    RTO = 1.0               # Timeout
+    RTO = 0.5               # Timeout
 
     # 链路 A (快路径)
     B_A = 100e6               # 100 Mbps
-    RTT_A = 0.3              # 300 ms
+    RTT_A = 0.05              # 300 ms
     LOSS_RATE_A = 0.05       # 5% 丢包率
     # 链路 B (慢路径)
     B_B = 20e6               # 20 Mbps
-    RTT_B = 0.9              # 900 ms
-    LOSS_RATE_B = 0.1        # 10% 丢包率
+    RTT_B = 0.15              # 900 ms
+    LOSS_RATE_B = 0.2        # 10% 丢包率
 
     # FLOW_SIZE_THRESHOLD = B_A * RTT_A / 8  # 如果流量小于此值，则不使用慢路径
     FLOW_SIZE_THRESHOLD = B_A / 2 / 8  # 如果流量小于此值，则不使用慢路径
@@ -47,6 +47,7 @@ class FastSim:
         self.B_B = cfg.B_B
         self.RTT_B = cfg.RTT_B
         self.loss_rate_b = loss_rate_b
+        print(f"Initialized FastSim with Loss Rates: A={self.loss_rate_a}, B={self.loss_rate_b}, Redundancy Mode: {redundancy_mode}")
         # 其他参数
         self.PKT_SIZE = cfg.PKT_SIZE
         # self.FLOW_SIZE = cfg.FLOW_SIZE
@@ -141,6 +142,7 @@ class FastSim:
                 actual_send_mode = 'RSR'  # 使用备份路径发送冗余包
             else:
                 actual_send_mode = 'SP'  # 或根据 send_mode_config 决定
+        print(f"Determined send mode: {actual_send_mode} for flow size {flow.total_bytes} bytes")
         return actual_send_mode
 
     def log_tx_event(self, message):
@@ -181,7 +183,7 @@ class FastSim:
         # Avoid division by zero or degenerate cases
         if L_A <= 0:
             return False  # No loss on A, no need for redundancy on B
-        if L_B >= 1.0:
+        if L_B >= 10.0:
             return False  # B always drops, useless
 
         # Expected recovery time if redundancy stays on A
@@ -192,6 +194,8 @@ class FastSim:
         term2 = L_A * (1 - L_B) * (T_A + T_B) / 2.0
         term3 = L_A * L_B * (RTO + T_A)
         E2 = term1 + term2 + term3
+
+        # print(f"Expected Recovery Times: E1 (A)={E1:.4f}, E2 (B)={E2:.4f}")
 
         return E2 < E1
     
@@ -677,14 +681,14 @@ def run_multi_flow_test():
     """运行多流混合场景，但是是串行不是并行"""
     flows = [
         Flow(0, 500 * 1024),          # 小流
-        Flow(1, 10 * 1024 * 1024),    # 小流（<5MB?）
+        Flow(1, 5 * 1024 * 1024),    # 小流（<5MB?）
         Flow(2, 50 * 1024 * 1024),    # 大流
         Flow(3, 200 * 1024 * 1024),   # 大流
     ]
     results = []
     for flow in flows:
         print(f"\n--- Running flow {flow.flow_id} ({flow.total_bytes / 1e6:.1f} MB) ---")
-        res = simulate(0.05, 0.1, 'xor_4_1', flow=flow)
+        res = simulate(0.2, 0.1, 'xor_4_1', flow=flow)
         results.append((flow.flow_id, res))
     
     for fid, res in results:
