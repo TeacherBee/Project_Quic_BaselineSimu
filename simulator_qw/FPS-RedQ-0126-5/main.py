@@ -4,7 +4,7 @@ import sys
 import datetime
 from redundancy import RedundancyManager
 
-useLog = False
+useLog = True
 
 class Config:
     PKT_SIZE = 1250         # bytes
@@ -117,8 +117,8 @@ class FastSim:
             initial_loss_a = self.loss_rate_a_func(self.arrival_time)
             initial_loss_b = self.loss_rate_b_func(self.arrival_time)
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.log_tx_filename = f"./log/log_tx_{redundancy_mode}_loss_{initial_loss_a:.2f}_{initial_loss_b:.2f}_{timestamp}.txt"
-            self.log_rx_filename = f"./log/log_rx_{redundancy_mode}_loss_{initial_loss_a:.2f}_{initial_loss_b:.2f}_{timestamp}.txt"
+            self.log_tx_filename = f"./log/log_tx_flow{flow.flow_id}_{redundancy_mode}_loss_{initial_loss_a:.2f}_{initial_loss_b:.2f}_{timestamp}.txt"
+            self.log_rx_filename = f"./log/log_rx_flow{flow.flow_id}_{redundancy_mode}_loss_{initial_loss_a:.2f}_{initial_loss_b:.2f}_{timestamp}.txt"
             try:
                 self.log_tx_handle = open(self.log_tx_filename, 'w')
                 self.log_rx_handle = open(self.log_rx_filename, 'w')
@@ -397,7 +397,7 @@ class FastSim:
                 selective = [s for s in self.receiver_buffer if s > cumulative]
                 self.schedule(t + self.RTT_A / 2, 'ack', {'cumulative': cumulative, 'selective': selective})
                 while (self.next_sn < self.num_pkts and (self.next_sn - (self.next_expected - 1)) < self.max_window):
-                    send_time = self.next_sn * self.PKT_SIZE * 8 / self.B_A
+                    send_time = self.arrival_time + self.next_sn * (self.PKT_SIZE * 8 / self.B_A)
                     self._send_packet(self.next_sn, send_time)
                     self.next_sn += 1
             else:
@@ -511,7 +511,7 @@ class MultiFlowRunner:
 # ======================
 def generate_bursty_flows():
     flows = []
-    rates = [40e6, 80e6, 125e6, 20e6, 60e6]
+    rates = [40e6, 60e6, 125e6, 80e6, 20e6]
     duration = 3.0
     for i, rate in enumerate(rates):
         arrival = i * duration
