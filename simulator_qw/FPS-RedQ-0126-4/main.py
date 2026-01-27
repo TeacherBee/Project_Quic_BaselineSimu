@@ -665,11 +665,21 @@ class FastSim:
         self.unacked[sn] = (t, path_for_retransmit)
         self.schedule(t + self.RTO, 'timeout', {'sn': sn, 'path': path_for_retransmit})
 
+def determine_redundancy_mode(loss_rate_a):
+    """根据链路A的丢包率自动选择冗余模式。"""
+    if loss_rate_a < 0.04:
+        return 'none'
+    elif loss_rate_a <= 0.12:
+        return 'xor_4_1'
+    else: # loss_rate_a > 0.12
+        return 'replicate_4_1'
 
 # ======================
 # CLI
 # ======================
-def simulate(loss_rate_a, loss_rate_b, redundancy_mode, flow=None):
+def simulate(loss_rate_a, loss_rate_b, flow=None):
+    """模拟函数，冗余模式由链路A的丢包率自动决定。"""
+    redundancy_mode = determine_redundancy_mode(loss_rate_a)
     if flow is None:
         # 默认向后兼容：使用 Config.FLOW_SIZE 创建一个 Flow
         flow = Flow(flow_id=0, total_bytes=Config().FLOW_SIZE)
@@ -688,36 +698,31 @@ def run_multi_flow_test():
     results = []
     for flow in flows:
         print(f"\n--- Running flow {flow.flow_id} ({flow.total_bytes / 1e6:.1f} MB) ---")
-        res = simulate(0.2, 0.1, 'xor_4_1', flow=flow)
+        res = simulate(0.03, 0.2, flow=flow)
         results.append((flow.flow_id, res))
     
     for fid, res in results:
         print(f"Flow {fid}: {res['throughput_mbps']:.2f} Mbps")
 
 def main():
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 3:
         print("Usage: python main.py <loss_rate_a> <loss_rate_b> <redundancy_mode>")
         print("  loss_rate_a: e.g., 0.05")
         print("  loss_rate_b: e.g., 0.10")
-        print("  redundancy_mode options:")
-        print("    - 'none'")
-        print("    - 'replicate' (1:1 redundancy)")
-        print("    - 'replicate_k_1' (e.g., 'replicate_4_1' → every 4 packets, add 1 redundant copy)")
-        print("    - 'xor_k_1' (e.g., 'xor_4_1' → every 4 packets, add 1 XOR redundant copy)")
         sys.exit(1)
     
     loss_rate_a = float(sys.argv[1])
     loss_rate_b = float(sys.argv[2])
-    redundancy_mode = sys.argv[3]
     
     random.seed(42)
-    result = simulate(loss_rate_a, loss_rate_b, redundancy_mode)
+    result = simulate(loss_rate_a, loss_rate_b)
     
     total_pkts = (Config().FLOW_SIZE + Config().PKT_SIZE - 1) // Config().PKT_SIZE
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    redundancy_mode = determine_redundancy_mode(loss_rate_a) # 获取用于打印的模式
     print(f"TX Log saved to file: log_tx_{redundancy_mode}_loss_{loss_rate_a:.2f}_{loss_rate_b:.2f}_{timestamp}.txt")
     print(f"RX Log saved to file: log_rx_{redundancy_mode}_loss_{loss_rate_a:.2f}_{loss_rate_b:.2f}_{timestamp}.txt")
-    print(f"Loss Rates A/B={loss_rate_a:.1%}/{loss_rate_b:.1%}, Redundancy={redundancy_mode}")
+    print(f"Loss Rates A/B={loss_rate_a:.1%}/{loss_rate_b:.1%}, Auto-selected Redundancy={redundancy_mode}")
     print(f"Throughput: {result['throughput_mbps']:.2f} Mbps")
     print(f"Avg Queue Length: {result['avg_queue_length']:.1f} packets")
     print(f"Delivered Packets: {result['delivered_packets']} / {total_pkts}")
