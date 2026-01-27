@@ -8,7 +8,7 @@ useLog = True
 
 class Config:
     PKT_SIZE = 1250         # bytes
-    FLOW_SIZE = 100 * 1024 * 1024  # 100 MB
+    FLOW_SIZE = 1 * 1024 * 1024  # 100 MB
     RTO = 1.0               # Timeout
 
     # 链路 A (快路径)
@@ -673,6 +673,23 @@ def simulate(loss_rate_a, loss_rate_b, redundancy_mode, flow=None):
     result = sim.run()
     return result
 
+def run_multi_flow_test():
+    """运行多流混合场景，但是是串行不是并行"""
+    flows = [
+        Flow(0, 500 * 1024),          # 小流
+        Flow(1, 10 * 1024 * 1024),    # 小流（<5MB?）
+        Flow(2, 50 * 1024 * 1024),    # 大流
+        Flow(3, 200 * 1024 * 1024),   # 大流
+    ]
+    results = []
+    for flow in flows:
+        print(f"\n--- Running flow {flow.flow_id} ({flow.total_bytes / 1e6:.1f} MB) ---")
+        res = simulate(0.05, 0.1, 'xor_4_1', flow=flow)
+        results.append((flow.flow_id, res))
+    
+    for fid, res in results:
+        print(f"Flow {fid}: {res['throughput_mbps']:.2f} Mbps")
+
 def main():
     if len(sys.argv) != 4:
         print("Usage: python main.py <loss_rate_a> <loss_rate_b> <redundancy_mode>")
@@ -702,4 +719,5 @@ def main():
     print(f"Delivered Packets: {result['delivered_packets']} / {total_pkts}")
 
 if __name__ == '__main__':
-    main()
+    # main()  # 单流
+    run_multi_flow_test()  # 临时测试多流
