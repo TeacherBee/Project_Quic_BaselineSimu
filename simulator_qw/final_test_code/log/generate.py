@@ -7,13 +7,14 @@ os.makedirs('./log', exist_ok=True)
 # 定义每个流的参数（贴合你的输出）
 
 # ------------- mine -------------
-# flows = [
-#     {"fid": 0, "avg_queue": 3294.7, "throughput": 58.57},
-#     {"fid": 1, "avg_queue": 3760.3, "throughput": 66.83},
-#     {"fid": 2, "avg_queue": 5763.3, "throughput": 56.85},
-#     {"fid": 3, "avg_queue": 9012.8, "throughput": 57.12},
-#     {"fid": 4, "avg_queue": 2528.1, "throughput": 36.61},
-# ]
+flows = [
+    {"fid": 0, "avg_queue": 3294.7, "throughput": 58.57},
+    {"fid": 1, "avg_queue": 3760.3, "throughput": 66.83},
+    {"fid": 2, "avg_queue": 5763.3, "throughput": 56.85},
+    {"fid": 3, "avg_queue": 9012.8, "throughput": 57.12},
+    {"fid": 4, "avg_queue": 2528.1, "throughput": 36.61},
+]
+path = 'mine'
 # 重传：11698 18040 62750 72586 6041
 # 效率bps/bit：113.8 113.8 63.1 40.6 94.9
 
@@ -26,6 +27,7 @@ os.makedirs('./log', exist_ok=True)
 #     {"fid": 3, "avg_queue": 9411.7, "throughput": 59.30},
 #     {"fid": 4, "avg_queue": 2596.3, "throughput": 38.99},
 # ]
+# path = 'sr'
 # 重传：11698 18040 61344 72586 6041
 # 效率：113.8 113.8 61.4 40.3 96.1
 
@@ -37,6 +39,7 @@ os.makedirs('./log', exist_ok=True)
 #     {"fid": 3, "avg_queue": 9031.9, "throughput": 58.72},
 #     {"fid": 4, "avg_queue": 2579.6, "throughput": 33.01},
 # ]
+# path = 'rsr'
 # 重传：11854 18129 62414 70939 5995
 # 效率：105.6 110.9 54.8 41.6 81.9
 
@@ -48,6 +51,7 @@ os.makedirs('./log', exist_ok=True)
 #     {"fid": 3, "avg_queue": 8006.3, "throughput": 53.49},
 #     {"fid": 4, "avg_queue": 2757.9, "throughput": 33.72},
 # ]
+# path = 'fps'
 # 重传：13130 19750 60451 70219 6364
 # 效率：105.7 100.0 66.0 42.8 78.2
 
@@ -59,6 +63,7 @@ os.makedirs('./log', exist_ok=True)
 #     {"fid": 3, "avg_queue": 9707.1, "throughput": 60.20},
 #     {"fid": 4, "avg_queue": 2552.5, "throughput": 35.52},
 # ]
+# path = 'none'
 # 重传：11698 18040 62750 76596 5875
 # 效率：113.8 113.8 63.1 39.7 89.0
 
@@ -70,17 +75,19 @@ os.makedirs('./log', exist_ok=True)
 #     {"fid": 3, "avg_queue": 9365.5, "throughput": 60.51},
 #     {"fid": 4, "avg_queue": 2574.5, "throughput": 39.99},
 # ]
+# path = 'replicate'
 # 重传：10544 17095 59630 73148 5899
 # 效率：83.2 79.5 63.8 41.3 99.4
 
 # ------------- xor -------------
-flows = [
-    {"fid": 0, "avg_queue": 200.0, "throughput": 14.77},
-    {"fid": 1, "avg_queue": 1418.6, "throughput": 18.32},
-    {"fid": 2, "avg_queue": 1766.8, "throughput": 25.21},
-    {"fid": 3, "avg_queue": 6607.7, "throughput": 60.51},
-    {"fid": 4, "avg_queue": 256.4, "throughput": 14.71},
-]
+# flows = [
+#     {"fid": 0, "avg_queue": 200.0, "throughput": 14.77},
+#     {"fid": 1, "avg_queue": 1418.6, "throughput": 18.32},
+#     {"fid": 2, "avg_queue": 1766.8, "throughput": 25.21},
+#     {"fid": 3, "avg_queue": 6607.7, "throughput": 60.51},
+#     {"fid": 4, "avg_queue": 256.4, "throughput": 14.71},
+# ]
+# path = 'xor'
 # 重传：3466 29649 57020 72544 1942
 # 效率：59.05 82.6 91.3 58.6 367.2
 
@@ -114,5 +121,5 @@ for flow in flows:
         'instant_throughput_mbps': inst_tp
     })
 
-    df.to_csv(f'./ts_flow{fid}_buffer.csv', index=False)
+    df.to_csv(f'./{path}/ts_flow{fid}_buffer.csv', index=False)
     print(f"✅ Generated ts_flow{fid}_buffer.csv (avg_queue={avg_q:.1f})")

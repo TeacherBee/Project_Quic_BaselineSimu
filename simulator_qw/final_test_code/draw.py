@@ -10,10 +10,12 @@ total_throughput_mbps = np.zeros_like(time_grid)
 # 假设每个包大小为 1250 字节（1500 字节 MTU - 头部）
 PKT_SIZE_BYTES = 1250
 
+path = 'mine'
+
 # 遍历每个流，插值到统一时间轴并累加
 for fid in range(5):
     try:
-        df = pd.read_csv(f'./log/ts_flow{fid}_buffer.csv')
+        df = pd.read_csv(f'./log/{path}/ts_flow{fid}_buffer.csv')
         df = df[df['time'] <= 15]
         if df.empty:
             continue
@@ -89,7 +91,7 @@ plt.ylim(0, 30)  # 根据你的数据，最大约 20
 plt.grid(True, linestyle='--', alpha=0.5)
 
 plt.tight_layout()
-plt.savefig('overall_system_metrics_with_correct_efficiency.png', dpi=200)
+plt.savefig(f'./result_png/{path}_overall_system_metrics_with_correct_efficiency.png', dpi=200)
 plt.close()
 
 print("✅ Plot saved. Max efficiency:", np.max(efficiency_bps_per_byte))

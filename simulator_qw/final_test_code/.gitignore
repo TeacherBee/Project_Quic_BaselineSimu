@@ -1,5 +1,6 @@
 # 忽略 log 文件夹下的所有内容
 log/*
 result/*
+result_png/*
 # 但是不要忽略 log 文件夹本身（通过否定规则）
 !log/
