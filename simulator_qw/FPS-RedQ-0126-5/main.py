@@ -4,7 +4,7 @@ import sys
 import datetime
 from redundancy import RedundancyManager
 
-useLog = True
+useLog = False
 
 class Config:
     PKT_SIZE = 1250         # bytes
@@ -70,6 +70,7 @@ class FastSim:
         self.RTO = cfg.RTO
         self.threshold = cfg.FLOW_SIZE_THRESHOLD
         self.arrival_time = flow.arrival_time
+        self.flow = flow
 
         # ✅ Use external large-flow decision
         if is_large_flow_override is not None:
@@ -112,6 +113,14 @@ class FastSim:
 
         self.last_send_time_A = - (self.PKT_SIZE * 8 / self.B_A)
         self.last_send_time_B = - (self.PKT_SIZE * 8 / self.B_B)
+
+        # ===== 新增统计变量 =====
+        self.retransmit_count = 0
+        self.packet_deliveries = []  # 记录每个包的交付时间 (t, sn)
+        self.buffer_samples = []     # 按固定间隔采样队列长度
+        self.sample_interval = 0.1   # 每 0.1 秒采样一次（可调）
+        self.next_sample_time = self.arrival_time
+        self.total_simulation_time = 0.0
 
         if useLog:
             initial_loss_a = self.loss_rate_a_func(self.arrival_time)
@@ -214,9 +223,13 @@ class FastSim:
         finally:
             self.close_logs()
 
-        last_time = max((t for t, _ in self.buffer_history), default=0.1)
-        throughput_mbps = (self.delivered * self.PKT_SIZE * 8) / last_time / 1e6
+        # 确保采样覆盖到仿真结束
+        last_time = max((t for t, _ in self.buffer_history), default=self.arrival_time + 0.1)
+        delivered_bytes = self.delivered * self.PKT_SIZE
+        throughput_bps = (delivered_bytes * 8) / (last_time - self.arrival_time) if (last_time > self.arrival_time) else 0.0
+        throughput_mbps = throughput_bps / 1e6
 
+        # ✅ 使用原始 buffer_history 计算 avg_queue（这才是对的！）
         if len(self.buffer_history) < 2:
             avg_queue = 0.0
         else:
@@ -228,10 +241,20 @@ class FastSim:
             time_span = prev_t - self.buffer_history[0][0]
             avg_queue = total / time_span if time_span > 0 else 0.0
 
+        avg_buffer_bytes = avg_queue * self.PKT_SIZE
+        efficiency = throughput_bps / avg_buffer_bytes if avg_buffer_bytes > 0 else 0.0
+
+        # 写入时间序列数据到 CSV（用于绘图）
+        self._save_time_series_to_csv()
+
         return {
             'throughput_mbps': throughput_mbps,
             'avg_queue_length': avg_queue,
-            'delivered_packets': self.delivered
+            'avg_buffer_bytes': avg_buffer_bytes,
+            'efficiency_bps_per_byte': efficiency,          # 新增核心指标
+            'retransmit_count': self.retransmit_count,      # 新增
+            'delivered_packets': self.delivered,
+            'total_simulation_time': self.total_simulation_time
         }
 
     # --- SEND LOGIC (unchanged from your original) ---
@@ -414,6 +437,16 @@ class FastSim:
                     self.current_group_status = set()
         self.buffer_history.append((t, len(self.receiver_buffer)))
 
+        # 记录成功交付（仅原始数据包）
+        if sn >= 0 and sn < self.num_pkts:
+            self.packet_deliveries.append(t)
+
+        # 按固定时间间隔采样 buffer 长度（用于时间序列分析）
+        while t >= self.next_sample_time:
+            current_queue_len = len(self.receiver_buffer)
+            self.buffer_samples.append((self.next_sample_time, current_queue_len))
+            self.next_sample_time += self.sample_interval
+
     def _attempt_recovery(self, t, event_time):
         if self.current_group_start is None:
             return
@@ -456,6 +489,7 @@ class FastSim:
     def _retransmit(self, t, sn, path_for_retransmit):
         if sn not in self.unacked:
             return
+        self.retransmit_count += 1
         # ✅ Use current time 't' for loss rate
         if path_for_retransmit == 'A':
             loss_rate = self.loss_rate_a_func(t)
@@ -470,6 +504,38 @@ class FastSim:
             self.log_tx_event(f"[RETRANS] RETRANSMISSION packet {sn} on {path_for_retransmit} LOST at {t:.4f}")
         self.unacked[sn] = (t, path_for_retransmit)
         self.schedule(t + self.RTO, 'timeout', {'sn': sn, 'path': path_for_retransmit})
+
+    def _save_time_series_to_csv(self):
+        """保存时间序列数据：时间, 队列长度, 累计交付包数"""
+        import csv
+        filename = f"./log/ts_flow{self.flow.flow_id}_buffer.csv"
+        cumulative_delivered = 0
+        delivery_iter = iter(sorted(self.packet_deliveries))
+        next_delivery = next(delivery_iter, None)
+
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['time', 'queue_length', 'cumulative_delivered', 'instant_throughput_mbps'])
+                prev_time = self.arrival_time
+                for t, q_len in self.buffer_samples:
+                    # 累计交付包数到当前时间 t
+                    while next_delivery is not None and next_delivery <= t:
+                        cumulative_delivered += 1
+                        next_delivery = next(delivery_iter, None)
+                    # 瞬时吞吐（过去 sample_interval 内的交付速率）
+                    if t > prev_time:
+                        interval = t - prev_time
+                        # 找出 [prev_time, t] 内的交付包数（简化：用累计差）
+                        # 更精确的做法是记录每个交付时间，但这里用近似
+                        instant_delivered = sum(1 for d in self.packet_deliveries if prev_time < d <= t)
+                        instant_thr_mbps = (instant_delivered * self.PKT_SIZE * 8) / interval / 1e6 if interval > 0 else 0.0
+                    else:
+                        instant_thr_mbps = 0.0
+                    writer.writerow([f"{t:.3f}", q_len, cumulative_delivered, f"{instant_thr_mbps:.3f}"])
+                    prev_time = t
+        except Exception as e:
+            print(f"Warning: Could not write time-series CSV for flow {self.flow.flow_id}: {e}")
 
 
 # ======================
@@ -583,9 +649,8 @@ def main():
     runner = MultiFlowRunner(loss_rate_a_func=loss_a, loss_rate_b_func=loss_b, flows=flows)
     results = runner.run()
 
-    print("\n=== FINAL RESULTS ===")
+    print("\n=== DETAILED FLOW RESULTS ===")
     total_delivered_bytes = 0
-    total_bytes = 0
     max_end_time = 0
 
     for fid, arr_time, dur, res in results:
@@ -593,8 +658,14 @@ def main():
         end_time = arr_time + dur
         max_end_time = max(max_end_time, end_time)
         total_delivered_bytes += res['delivered_packets'] * Config().PKT_SIZE
-        total_bytes += flow.total_bytes
-        print(f"Flow {fid}: {res['throughput_mbps']:.2f} Mbps, Avg Queue: {res['avg_queue_length']:.1f}")
+
+        eff = res['efficiency_bps_per_byte']
+        print(f"\nFlow {fid} ({flow.sendMode if hasattr(flow, 'sendMode') else 'N/A'}):")
+        print(f"  Throughput: {res['throughput_mbps']:.2f} Mbps")
+        print(f"  Avg Buffer: {res['avg_buffer_bytes']/1024:.1f} KB")
+        print(f"  Efficiency: {eff:.2f} bps/byte  (or {eff*8:.1f} bps/bit)")
+        print(f"  Retransmissions: {res['retransmit_count']}")
+        print(f"  Avg Queue: {res['avg_queue_length']:.1f} pkts")
 
     overall_throughput = (total_delivered_bytes * 8) / max_end_time / 1e6
     print(f"\nOverall Throughput: {overall_throughput:.2f} Mbps over {max_end_time:.2f}s")
