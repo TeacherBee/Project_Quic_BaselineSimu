@@ -233,13 +233,13 @@ class FastSim:
         if len(self.buffer_history) < 2:
             avg_queue = 0.0
         else:
-            total = 0.0
+            total_area = 0
             prev_t, prev_q = self.buffer_history[0]
             for t, q in self.buffer_history[1:]:
-                total += prev_q * (t - prev_t)
+                total_area += prev_q * (t - prev_t)
                 prev_t, prev_q = t, q
             time_span = prev_t - self.buffer_history[0][0]
-            avg_queue = total / time_span if time_span > 0 else 0.0
+            avg_queue = total_area / time_span
 
         avg_buffer_bytes = avg_queue * self.PKT_SIZE
         efficiency = throughput_bps / avg_buffer_bytes if avg_buffer_bytes > 0 else 0.0
