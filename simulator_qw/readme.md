@@ -28,4 +28,15 @@ redundancy.py : 冗余控制器，接收sn，根据冗余模式mode来返回待�
 main.py : 仿真类，main
 使用方法：python main.py 0.05 xor_x_1
 
-## ./FPS-RedQ-0126-2：
+## ./FPS-RedQ-0126-2：添加多路径配置，实现FPS功能
+使用方法：python main.py 0.05 0.3 xor_x_1
+
+## ./FPS-RedQ-0126-3：添加冗余路由配置，实现冗余流智能路由功能
+使用方法：python main.py 0.05 0.3 xor_x_1
+
+## ./FPS-RedQ-0126-4：添加大小流判断与单流注入功能，实现完整框架功能
+使用方法：python main.py 0.05 0.1
+
+## ./FPS-RedQ-0126-5：实现多流竞争场景
+使用方法：python main.py 0.05 0.1
+
